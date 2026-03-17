@@ -1,0 +1,12 @@
+services:
+  ai-service:
+    build: .
+    ports:
+      - "8001:8000"
+    env_file:
+      - .env
+    restart: unless-stopped
+
+# Note: PostgreSQL and Redis are NOT defined here.
+# They are shared from NestJS backend's docker-compose.
+# Connect via external network or use host IP.
