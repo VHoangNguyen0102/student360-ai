@@ -1,32 +1,65 @@
 """
-Finance Agent — Phase 1 LangGraph ReAct agent.
-Handles 6-Jars chat with automatic tool calling and conversation memory.
+Finance Agent — tool-calling chat with in-process session memory.
 """
+
 from __future__ import annotations
 
-from langgraph.checkpoint.memory import MemorySaver
-from langgraph.prebuilt import create_react_agent
+from typing import Any
 
-from app.agents.finance.prompts import get_finance_system_prompt
-from app.agents.finance.tools.jars import ALL_JARS_TOOLS
+import structlog
+from langchain_core.messages import BaseMessage, HumanMessage
+from langchain_core.runnables import RunnableConfig
+
+from app.agents.finance.composition import get_finance_system_prompt, get_finance_tools
+from app.agents.finance.react_loop import run_tool_calling_turn
+from app.core.chat_session_store import run_finance_turn
 from app.core.llm import get_llm
-from app.core.memory import get_checkpointer
 
-# Module-level singleton (lazy init so tests can import without real credentials)
-_finance_agent = None
+logger = structlog.get_logger()
+
+_finance_agent: FinanceToolAgent | None = None
 
 
-def get_finance_agent():
-    """Return the shared Finance ReAct agent instance (created on first call)."""
+class FinanceToolAgent:
+    """LangGraph-free ReAct-style agent with thread-local message history."""
+
+    async def ainvoke(self, input: dict[str, Any], config: RunnableConfig | None = None) -> dict[str, Any]:
+        cfg = config or {}
+        configurable = (cfg.get("configurable") or {}) if isinstance(cfg, dict) else {}
+        thread_id = str(configurable.get("thread_id") or "default")
+        user_id = str(configurable.get("user_id") or "")
+
+        incoming: list[BaseMessage] = list(input.get("messages") or [])
+        if not incoming:
+            return {"messages": [HumanMessage(content="")]}
+
+        tool_cfg: RunnableConfig = {
+            "configurable": {
+                "thread_id": thread_id,
+                "user_id": user_id,
+            }
+        }
+        llm = get_llm()
+
+        tools = get_finance_tools()
+
+        async def _run(hist: list[BaseMessage], tc: RunnableConfig) -> None:
+            await run_tool_calling_turn(llm, tools, hist, tool_config=tc)
+
+        tail = await run_finance_turn(
+            thread_id,
+            incoming,
+            get_finance_system_prompt(),
+            _run,
+            tool_cfg,
+        )
+
+        logger.debug("finance_turn_done", thread_id=thread_id, new_messages=len(tail))
+        return {"messages": tail}
+
+
+def get_finance_agent() -> FinanceToolAgent:
     global _finance_agent
     if _finance_agent is None:
-        llm = get_llm()
-        checkpointer = get_checkpointer()
-        _finance_agent = create_react_agent(
-            model=llm,
-            tools=ALL_JARS_TOOLS,
-            checkpointer=checkpointer,
-            prompt=get_finance_system_prompt(),
-        )
+        _finance_agent = FinanceToolAgent()
     return _finance_agent
-

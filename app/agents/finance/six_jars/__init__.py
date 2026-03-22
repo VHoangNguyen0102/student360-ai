@@ -1,7 +1,5 @@
-"""
-Shim: re-exports for legacy imports (`from app.agents.finance.prompts import ...`).
-Prefer `app.agents.finance.six_jars.prompts_*` in new code.
-"""
+"""Finance subdomain: 6-Jars (money jars) prompts and tools."""
+
 from app.agents.finance.six_jars.prompts_agent import get_finance_system_prompt
 from app.agents.finance.six_jars.prompts_classify import CLASSIFY_SYSTEM_PROMPT
 
