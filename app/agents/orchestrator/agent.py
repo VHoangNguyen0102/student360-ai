@@ -1,109 +1,101 @@
 """
-Orchestrator Agent — Phase C.
-Routes requests to specialist agents using LangGraph Supervisor pattern.
-Active in Phase C+ only. Phase 1 routes directly to FinanceAgent.
+Orchestrator — routes to specialist agents (no LangGraph).
 """
 
 from __future__ import annotations
 
 import structlog
 from langchain_core.messages import AIMessage, BaseMessage
-from langgraph.graph import END, START, StateGraph
 
 from app.agents.orchestrator.registry import get_specialist_agent
 from app.agents.orchestrator.router import route_agent
-from app.agents.orchestrator.state import OrchestratorState
 from app.models.chat import ContextHint
 
-_orchestrator_agent = None
 logger = structlog.get_logger()
+
+_orchestrator = None
 
 
 def _last_human_message(messages: list[BaseMessage]) -> BaseMessage | None:
-	for msg in reversed(messages or []):
-		if getattr(msg, "type", None) == "human":
-			return msg
-	return None
+    for msg in reversed(messages or []):
+        if getattr(msg, "type", None) == "human":
+            return msg
+    return None
 
 
-async def _node_route(state: OrchestratorState) -> OrchestratorState:
-	last_human = _last_human_message(state.get("messages", []))
-	message_text = getattr(last_human, "content", "") if last_human else ""
+async def _orchestrator_ainvoke(input: dict, config: dict | None = None) -> dict:
+    messages: list[BaseMessage] = list(input.get("messages") or [])
+    session_id = str(input.get("session_id") or "")
+    user_id = str(input.get("user_id") or "")
+    context_hint = input.get("context_hint", ContextHint.AUTO)
+    if not isinstance(context_hint, ContextHint):
+        context_hint = ContextHint.AUTO
 
-	hint = state.get("context_hint", ContextHint.AUTO)
-	selected, reason = await route_agent(str(message_text), hint)
+    last_human = _last_human_message(messages)
+    message_text = str(getattr(last_human, "content", "") if last_human else "")
 
-	logger.info(
-		"orchestrator_route",
-		selected_agent=selected,
-		route_reason=reason,
-		context_hint=str(hint),
-		session_id=state.get("session_id"),
-		user_id=state.get("user_id"),
-	)
+    selected, route_reason = await route_agent(message_text, context_hint)
+    logger.info(
+        "orchestrator_route",
+        selected_agent=selected,
+        route_reason=route_reason,
+        context_hint=str(context_hint),
+        session_id=session_id,
+        user_id=user_id,
+    )
 
-	return {
-		"selected_agent": selected,
-		"route_reason": reason,
-	}
+    if last_human is None:
+        return {
+            "messages": [AIMessage(content="Xin lỗi, mình chưa nhận được câu hỏi.")],
+            "agent_used": [selected],
+        }
 
+    specialist = get_specialist_agent(selected)
+    subthread_id = f"{session_id}:{selected}" if session_id else selected
+    cfg = config or {}
+    configurable = dict(cfg.get("configurable") or {})
+    configurable.setdefault("thread_id", subthread_id)
+    configurable.setdefault("user_id", user_id)
+    merged_config = {**cfg, "configurable": configurable}
 
-async def _node_dispatch(state: OrchestratorState) -> OrchestratorState:
-	agent_id = state.get("selected_agent", "finance")
-	session_id = state.get("session_id") or ""
-	user_id = state.get("user_id") or ""
+    logger.info(
+        "orchestrator_dispatch",
+        agent_id=selected,
+        subthread_id=subthread_id,
+        session_id=session_id,
+        user_id=user_id,
+        route_reason=route_reason,
+    )
 
-	last_human = _last_human_message(state.get("messages", []))
-	if last_human is None:
-		return {
-			"messages": [AIMessage(content="Xin lỗi, mình chưa nhận được câu hỏi.")],
-			"agent_used": [agent_id],
-		}
+    result = await specialist.ainvoke({"messages": [last_human]}, config=merged_config)
+    spec_messages = result.get("messages", []) if isinstance(result, dict) else []
 
-	specialist = get_specialist_agent(agent_id)
-	# Cách B: tách memory theo mảng (subthread).
-	subthread_id = f"{session_id}:{agent_id}" if session_id else agent_id
-	config = {"configurable": {"thread_id": subthread_id, "user_id": user_id}}
+    if spec_messages:
+        first = spec_messages[0]
+        if (
+            getattr(first, "type", None) == "human"
+            and getattr(first, "content", None) == getattr(last_human, "content", None)
+        ):
+            spec_messages = spec_messages[1:]
 
-	logger.info(
-		"orchestrator_dispatch",
-		agent_id=agent_id,
-		subthread_id=subthread_id,
-		session_id=session_id,
-		user_id=user_id,
-		route_reason=state.get("route_reason"),
-	)
+    if not spec_messages:
+        spec_messages = [AIMessage(content="Xin lỗi, mình chưa thể xử lý yêu cầu lúc này.")]
 
-	result = await specialist.ainvoke({"messages": [last_human]}, config=config)
-	spec_messages = result.get("messages", []) if isinstance(result, dict) else []
-
-	# Avoid duplicating the same human message in the returned state.
-	if spec_messages:
-		first = spec_messages[0]
-		if getattr(first, "type", None) == "human" and getattr(first, "content", None) == getattr(last_human, "content", None):
-			spec_messages = spec_messages[1:]
-
-	if not spec_messages:
-		spec_messages = [AIMessage(content="Xin lỗi, mình chưa thể xử lý yêu cầu lúc này.")]
-
-	return {
-		"messages": spec_messages,
-		"agent_used": [agent_id],
-	}
+    return {
+        "messages": spec_messages,
+        "agent_used": [selected],
+    }
 
 
-def get_orchestrator_agent():
-	"""Return a compiled orchestrator graph (singleton)."""
-	global _orchestrator_agent
-	if _orchestrator_agent is not None:
-		return _orchestrator_agent
+class _OrchestratorShim:
+    __slots__ = ()
 
-	graph = StateGraph(OrchestratorState)
-	graph.add_node("route", _node_route)
-	graph.add_node("dispatch", _node_dispatch)
-	graph.add_edge(START, "route")
-	graph.add_edge("route", "dispatch")
-	graph.add_edge("dispatch", END)
+    async def ainvoke(self, input: dict, config: dict | None = None) -> dict:
+        return await _orchestrator_ainvoke(input, config)
 
-	_orchestrator_agent = graph.compile()
-	return _orchestrator_agent
+
+def get_orchestrator_agent() -> _OrchestratorShim:
+    global _orchestrator
+    if _orchestrator is None:
+        _orchestrator = _OrchestratorShim()
+    return _orchestrator

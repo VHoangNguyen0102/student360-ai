@@ -1,6 +1,5 @@
 """
-Embedding Generation Worker — Phase 1A.
-Event-driven: triggered when new messages/transactions are saved.
-Generates embeddings and stores in pgvector tables.
+Embedding Generation Worker — future / optional.
+(Classify no longer writes to pgvector; enable this when a new embedding use case exists.)
 """
 # TODO: Phase 1A — implement embedding worker

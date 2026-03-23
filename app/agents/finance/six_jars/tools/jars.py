@@ -1,8 +1,8 @@
 """
-Finance Agent — 6-Jars Tools (11 read-only tools)
+Six Jars domain — tools for the 6-Jars money method.
 Port from: backend/src/modules/jars/ai_integration/jars-tools.ts
 
-All tools receive user_id from LangGraph RunnableConfig — the agent never
+All tools receive user_id from RunnableConfig — the agent never
 needs to pass it explicitly.
 
 Tools:
@@ -11,6 +11,7 @@ Tools:
   Budget:       get_budget_status, get_monthly_summary, compare_months
   Trend:        get_spending_trend
   Schedule:     get_auto_transfers
+  Affordability: can_afford_this
 """
 from __future__ import annotations
 
@@ -24,6 +25,7 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 
 from app.core.database import get_pool
+from app.agents.finance.tools.affordability import can_afford_this
 
 logger = structlog.get_logger()
 
@@ -456,10 +458,10 @@ async def get_auto_transfers(config: RunnableConfig) -> str:
 
 
 # ─────────────────────────────────────────────────────────────
-# Exported registry consumed by agent.py
+# Exported registry (composed into finance agent via composition.py)
 # ─────────────────────────────────────────────────────────────
 
-ALL_JARS_TOOLS = [
+ALL_SIX_JARS_TOOLS = [
     get_jar_balance,
     get_jar_allocations,
     get_jar_statistics,
@@ -471,4 +473,5 @@ ALL_JARS_TOOLS = [
     compare_months,
     get_spending_trend,
     get_auto_transfers,
+    can_afford_this,
 ]

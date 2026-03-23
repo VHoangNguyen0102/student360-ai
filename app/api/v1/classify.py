@@ -1,21 +1,18 @@
 """
 Classify API — POST /api/v1/classify, POST /api/v1/classify/override
-3-step pipeline: exact keyword match → vector similarity → LLM fallback.
+2-step pipeline: exact keyword match → LLM fallback.
 Port from: backend/src/modules/jars/ai_integration/classify.service.ts
 """
 from __future__ import annotations
 
-import asyncio
 import json
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 
 from app.agents.finance.prompts import CLASSIFY_SYSTEM_PROMPT
 from app.core.database import get_pool
-from app.core.embeddings import embed_query, embed_text
 from app.core.llm import get_llm
-from app.core.vector_store import find_similar_transaction, save_transaction_embedding
 from app.models.classify import (
     ClassifyOverrideRequest,
     ClassifyRequest,
@@ -37,7 +34,7 @@ async def classify(
 ) -> ClassifyResponse:
     """
     Classify a transaction description into a jar code.
-    Priority: preference table → vector similarity → LLM.
+    Priority: preference table → LLM.
     """
     keyword = req.description.lower().strip()
 
@@ -60,26 +57,7 @@ async def classify(
         )
 
     # ────────────────────────────────────────────
-    # Step 2: Vector similarity
-    # ────────────────────────────────────────────
-    query_vec = await embed_query(req.description)
-    if query_vec:
-        match = await find_similar_transaction(req.user_id, query_vec)
-        if match:
-            logger.debug(
-                "classify_vector_hit",
-                jar_code=match["jar_code"],
-                similarity=match["similarity"],
-                confirmed_by=match["confirmed_by"],
-            )
-            return ClassifyResponse(
-                suggested_jar_code=match["jar_code"],
-                confidence=match["similarity"],
-                source=ClassifySource.VECTOR,
-            )
-
-    # ────────────────────────────────────────────
-    # Step 3: LLM fallback
+    # Step 2: LLM fallback
     # ────────────────────────────────────────────
     user_message = (
         f'Phân loại giao dịch sau vào đúng lọ:\n'
@@ -130,12 +108,6 @@ async def classify(
             source=ClassifySource.AI,
         )
 
-    # Fire-and-forget: save embedding for future vector hits
-    if query_vec:
-        asyncio.ensure_future(
-            save_transaction_embedding(req.user_id, req.description, jar_code, query_vec, "ai")
-        )
-
     return ClassifyResponse(
         suggested_jar_code=jar_code,
         confidence=confidence,
@@ -148,14 +120,10 @@ async def classify_override(
     req: ClassifyOverrideRequest,
     _: str = Depends(verify_service_token),
 ) -> None:
-    """
-    Save a user-confirmed jar for a keyword.
-    Updates both preference table and transaction_embeddings with confirmed_by='user'.
-    """
+    """Save a user-confirmed jar for a keyword in ai_user_preferences_6jars."""
     keyword = req.keyword.lower().strip()
     pool = await get_pool()
 
-    # Update preference table
     async with pool.acquire() as conn:
         existing = await conn.fetchrow(
             "SELECT id, count FROM ai_user_preferences_6jars WHERE user_id=$1 AND keyword=$2",
@@ -176,12 +144,3 @@ async def classify_override(
                 keyword,
                 req.jar_code,
             )
-
-    # Save user-confirmed embedding (async, best-effort)
-    async def _save_embedding():
-        vec = await embed_text(req.keyword)
-        if vec:
-            await save_transaction_embedding(req.user_id, req.keyword, req.jar_code, vec, "user")
-
-    asyncio.ensure_future(_save_embedding())
-

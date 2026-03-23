@@ -5,8 +5,13 @@ from typing import Literal
 class Settings(BaseSettings):
     ENV: Literal["local", "staging", "production"] = "local"
 
-    # Gemini
-    GEMINI_API_KEY: str
+    # LLM provider: gemini (cloud) or ollama (local)
+    LLM_PROVIDER: Literal["gemini", "ollama"] = "gemini"
+    OLLAMA_BASE_URL: str = "http://127.0.0.1:11434"
+    OLLAMA_MODEL: str = "qwen2.5:3b"
+
+    # Gemini (used when LLM_PROVIDER=gemini)
+    GEMINI_API_KEY: str = ""
     GEMINI_LLM_MODEL: str = "gemini-2.5-flash-lite"
     GEMINI_EMBEDDING_MODEL: str = "gemini-embedding-001"
 

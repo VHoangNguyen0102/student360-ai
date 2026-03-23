@@ -6,7 +6,22 @@ services:
     env_file:
       - .env
     restart: unless-stopped
+    # When using profile local-llm, set in .env: LLM_PROVIDER=ollama and
+    # OLLAMA_BASE_URL=http://ollama:11434 so the app reaches Ollama by service name.
 
-# Note: PostgreSQL and Redis are NOT defined here.
-# They are shared from NestJS backend's docker-compose.
-# Connect via external network or use host IP.
+  ollama:
+    image: ollama/ollama:latest
+    profiles:
+      - local-llm
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
+    restart: unless-stopped
+
+volumes:
+  ollama_data:
+
+# PostgreSQL and Redis are NOT defined here.
+# They are shared from the NestJS backend docker-compose.
+# Connect via external network or host IP.
