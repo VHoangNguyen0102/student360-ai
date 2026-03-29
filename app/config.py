@@ -13,7 +13,6 @@ class Settings(BaseSettings):
     # Gemini (used when LLM_PROVIDER=gemini)
     GEMINI_API_KEY: str = ""
     GEMINI_LLM_MODEL: str = "gemini-2.5-flash-lite"
-    GEMINI_EMBEDDING_MODEL: str = "gemini-embedding-001"
 
     # PostgreSQL (shared with NestJS backend)
     DATABASE_URL: str  # postgresql+asyncpg://user:pass@host/db

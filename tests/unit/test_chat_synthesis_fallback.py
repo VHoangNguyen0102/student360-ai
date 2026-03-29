@@ -1,6 +1,6 @@
 from langchain_core.messages import AIMessage, ToolMessage
 
-from app.api.v1.chat import _synthesise_reply_from_tools
+from app.api.finance.chat import _synthesise_reply_from_tools
 
 
 def test_synthesise_reply_from_get_jar_statistics_tool_output():
