@@ -152,7 +152,7 @@ async def chat(
     req: ChatRequest,
     _: str = Depends(verify_service_token),
 ) -> ChatResponse:
-    """Multi-turn chat with Finance agent."""
+    """Multi-turn chat with Finance agent (6 Jars knowledge + personal data)."""
     session_id = req.session_id or str(uuid.uuid4())
     agent = get_finance_agent()
 
@@ -188,6 +188,19 @@ async def chat(
     if not messages:
         raise HTTPException(status_code=500, detail="Agent returned no messages")
 
+    # Extract intent and answer_mode from agent result (for logging/debug)
+    intent: str | None = result.get("intent")
+    answer_mode: str | None = result.get("answer_mode")
+
+    logger.info(
+        "chat_request_processed",
+        user_id=req.user_id,
+        session_id=session_id,
+        intent=intent,
+        answer_mode=answer_mode,
+        latency_ms=latency_ms,
+    )
+
     # Logging tool usage and debug
     for msg in messages:
         if hasattr(msg, "tool_calls") and msg.tool_calls:
@@ -197,17 +210,27 @@ async def chat(
                     args = tc.get("args")
                 else:
                     args = getattr(tc, "args", None)
-                logger.info("tool_used", tool=tool_name, args=args, user_id=req.user_id)
-        logger.info("debug_message", type=msg.type, content_len=len(str(msg.content)), content_preview=str(msg.content)[:100])
+                logger.info("tool_used", tool=tool_name, args=args, user_id=req.user_id, intent=intent)
+        logger.info(
+            "debug_message",
+            type=msg.type,
+            content_len=len(str(msg.content)),
+            content_preview=str(msg.content)[:100],
+        )
 
     reply = messages[-1].content
     if isinstance(reply, list):
-        reply = " ".join([str(block.get("text", "")) for block in reply if isinstance(block, dict) and "text" in block])
+        reply = " ".join(
+            [str(block.get("text", "")) for block in reply if isinstance(block, dict) and "text" in block]
+        )
     elif not isinstance(reply, str):
         reply = str(reply)
 
     if not reply or not reply.strip():
-        reply = _synthesise_reply_from_tools(messages) or "Xin lỗi, tôi chưa thể tổng hợp kết quả. Vui lòng thử lại."
+        reply = (
+            _synthesise_reply_from_tools(messages)
+            or "Xin lỗi, tôi chưa thể tổng hợp kết quả. Vui lòng thử lại."
+        )
 
     # Extract token usage from the last AI message if available
     usage_meta = getattr(messages[-1], "usage_metadata", None)
@@ -229,5 +252,6 @@ async def chat(
         session_id=session_id,
         agent_used=agent_used,
         usage=usage,
+        intent=intent,
+        answer_mode=answer_mode,
     )
-

@@ -30,3 +30,7 @@ class ChatResponse(BaseModel):
     session_id: str
     agent_used: list[str]
     usage: Optional[ChatUsage] = None
+    # Intent classification metadata (for logging/debug — not used by frontend rendering)
+    intent: Optional[str] = None        # knowledge_6jars | personal_finance | hybrid
+    answer_mode: Optional[str] = None   # knowledge | personal | hybrid
+
