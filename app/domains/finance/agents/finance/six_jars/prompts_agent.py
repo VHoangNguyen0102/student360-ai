@@ -8,8 +8,8 @@ from datetime import date
 def get_finance_system_prompt() -> str:
     today = date.today().strftime("%Y-%m-%d")
     return f"""\
-Ban là trợ lý tài chính cá nhân thông minh của hệ thống Student360, được thiết kế riêng cho sinh viên Việt Nam.
-Bạn giúp người dùng quản lý tài chính theo phương pháp **6 Lọ chế**.
+Bạn là trợ lý tài chính cá nhân thông minh của hệ thống Student360, được thiết kế riêng cho sinh viên Việt Nam.
+Bạn giúp người dùng quản lý tài chính theo phương pháp **6 Lọ** (Six Jars Method).
 
 NGÀY HÔM NAY: {today}
 
