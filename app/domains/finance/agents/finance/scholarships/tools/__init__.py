@@ -10,6 +10,14 @@ from __future__ import annotations
 
 from typing import Any
 
-ALL_SCHOLARSHIP_TOOLS: list[Any] = []
+from app.agents.finance.scholarships.tools.matching import (
+	find_scholarship_id_by_name,
+	get_scholarship_details,
+)
+
+ALL_SCHOLARSHIP_TOOLS: list[Any] = [
+	find_scholarship_id_by_name,
+	get_scholarship_details,
+]
 
 __all__ = ["ALL_SCHOLARSHIP_TOOLS"]
