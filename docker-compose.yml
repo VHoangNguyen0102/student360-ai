@@ -5,6 +5,8 @@ services:
       - "8001:8000"
     env_file:
       - .env
+    volumes:
+      - ${GCP_CREDENTIALS_FILE:-./gcp-credentials.json}:/app/gcp-credentials.json:ro
     restart: unless-stopped
     # When using profile local-llm, set in .env: LLM_PROVIDER=ollama and
     # OLLAMA_BASE_URL=http://ollama:11434 so the app reaches Ollama by service name.
@@ -22,6 +24,6 @@ services:
 volumes:
   ollama_data:
 
-# PostgreSQL and Redis are NOT defined here.
-# They are shared from the NestJS backend docker-compose.
-# Connect via external network or host IP.
+    # PostgreSQL and Redis are NOT defined here.
+    # They are shared from the NestJS backend docker-compose.
+    # Connect via external network or host IP.

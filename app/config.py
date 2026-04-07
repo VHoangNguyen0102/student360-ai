@@ -5,14 +5,20 @@ from typing import Literal
 class Settings(BaseSettings):
     ENV: Literal["local", "staging", "production"] = "local"
 
-    # LLM provider: gemini (cloud) or ollama (local)
-    LLM_PROVIDER: Literal["gemini", "ollama"] = "gemini"
+    # LLM provider: gemini, vertexai, or ollama
+    LLM_PROVIDER: Literal["gemini", "vertexai", "ollama"] = "gemini"
     OLLAMA_BASE_URL: str = "http://127.0.0.1:11434"
     OLLAMA_MODEL: str = "qwen2.5:3b"
 
     # Gemini (used when LLM_PROVIDER=gemini)
     GEMINI_API_KEY: str = ""
-    GEMINI_LLM_MODEL: str = "gemini-2.5-flash-lite"
+    GEMINI_LLM_MODEL: str = "gemini-2.0-flash-lite"
+
+    # Vertex AI (used when LLM_PROVIDER=vertexai)
+    VERTEX_AI_PROJECT: str = ""
+    VERTEX_AI_LOCATION: str = "us-central1"
+    VERTEX_LLM_MODEL: str = "gemini-2.5-flash-lite"
+    GOOGLE_APPLICATION_CREDENTIALS: str = "/app/gcp-credentials.json"
 
     # PostgreSQL (shared with NestJS backend)
     DATABASE_URL: str  # postgresql+asyncpg://user:pass@host/db
