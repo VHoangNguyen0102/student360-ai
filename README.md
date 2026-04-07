@@ -46,6 +46,14 @@ OpenAPI JSON:
 
 - http://localhost:8001/openapi.json
 
+Swagger UI:
+
+- http://localhost:8001/docs
+
+ReDoc:
+
+- http://localhost:8001/redoc
+
 ## Quick Start
 
 ```bash

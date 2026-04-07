@@ -1,6 +1,9 @@
-"""
-Chat API — POST /api/v1/chat
-Directly routes to FinanceAgent (6-Jars context).
+"""Chat API — POST /api/v1/chat
+
+Directly routes to the in-process Finance agent.
+
+By default it uses the 6-Jars prompt/tools, but you can switch to scholarships
+via env `FINANCE_AGENT_MODE=scholarships` (see `app/domains/finance/agents/finance/composition.py`).
 Multi-agent orchestration is kept as optional scaffold and is not used at runtime.
 """
 from __future__ import annotations
