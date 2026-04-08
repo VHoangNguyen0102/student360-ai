@@ -29,3 +29,7 @@ htmlcov/
 
 # Logs
 *.log
+
+# Secrets
+gcp-credentials.json
+student360-*.json
