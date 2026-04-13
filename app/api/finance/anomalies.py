@@ -7,7 +7,7 @@ from __future__ import annotations
 from typing import Optional
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 
 from app.core.database import get_pool
@@ -67,7 +67,12 @@ async def get_anomaly_alerts(
     return [AnomalyAlert(**dict(r)) for r in rows]
 
 
-@router.patch("/anomalies/{alert_id}/read", status_code=204)
+@router.patch(
+    "/anomalies/{alert_id}/read",
+    status_code=204,
+    response_class=Response,
+    response_model=None,
+)
 async def mark_alert_read(
     alert_id: str,
     user_id: str,

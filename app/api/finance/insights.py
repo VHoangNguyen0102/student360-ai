@@ -5,7 +5,6 @@ Direct DB fetch + single LLM call (no agent loop).
 """
 from __future__ import annotations
 
-import asyncio
 import json
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -127,10 +126,8 @@ async def get_insights(
 
     pool = await get_pool()
     async with pool.acquire() as conn:
-        cur_rows, prev_rows = await asyncio.gather(
-            _fetch_month(conn, req.user_id, cur_ref),
-            _fetch_month(conn, req.user_id, prev_ref),
-        )
+        cur_rows = await _fetch_month(conn, req.user_id, cur_ref)
+        prev_rows = await _fetch_month(conn, req.user_id, prev_ref)
 
     if not cur_rows:
         return InsightsResponse(
