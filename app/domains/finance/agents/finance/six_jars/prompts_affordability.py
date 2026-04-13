@@ -2,6 +2,8 @@
 Affordability Check — LLM Prompts (Six Jars domain)
 """
 
+from app.core.prompts.chat_voice import get_global_chat_style_rules
+
 
 def get_affordability_check_prompt(
     description: str,
@@ -29,7 +31,7 @@ def get_affordability_check_prompt(
         user_context: Additional context from user (optional)
     """
 
-    system_prompt = """\
+    system_prompt = f"""\
 Bạn là một trợ lý tài chính thông minh giúp sinh viên đưa ra quyết định mua sắm cơ sở trên dữ liệu tài chính thực tế.
 
 Mục đích: Giúp sinh viên tránh chi tiêu bừa bãi mà vẫn cho phép chi tiêu hợp lý.
@@ -42,15 +44,18 @@ Khi đánh giá:
 5. Xem xét cho phép chi tiêu vui vẻ trong giới hạn hợp lý
 
 Trả về JSON thuần túy (không markdown):
-{
+{{
   "recommendation": "yes" | "no" | "wait",
-  "reason": "Giải thích ngắn gọn (1-2 câu tiếng Việt)"
-}
+  "reason": "1–2 câu tiếng Việt, thân thiện, không dài dòng (đồng nhất giọng chat bên dưới)"
+}}
 
 Nguyên tắc:
 - "yes": Số dư đủ + không ảnh hưởng kế hoạch tài chính
 - "no": Nghèo đi hoặc sẽ làm mất cân bằng lọ
 - "wait": Có thể mua nhưng tốt hơn là tiết kiệm trước / chờ lương tháng sau
+
+---
+{get_global_chat_style_rules()}
 """
 
     user_message = f"""\

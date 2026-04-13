@@ -11,8 +11,15 @@ class Settings(BaseSettings):
     OLLAMA_MODEL: str = "qwen2.5:3b"
 
     # Gemini (used when LLM_PROVIDER=gemini)
+    # Supports multiple keys for quota rotation: GEMINI_API_KEY=key1,key2,key3
     GEMINI_API_KEY: str = ""
     GEMINI_LLM_MODEL: str = "gemini-2.5-flash-lite"
+    GEMINI_EMBEDDING_MODEL: str = "gemini-embedding-001"
+
+    @property
+    def GEMINI_API_KEYS(self) -> list[str]:
+        """Parse comma-separated API keys; always returns a list."""
+        return [k.strip() for k in self.GEMINI_API_KEY.split(",") if k.strip()]
 
     # PostgreSQL (shared with NestJS backend)
     DATABASE_URL: str  # postgresql+asyncpg://user:pass@host/db

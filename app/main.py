@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
-from app.api.finance import anomalies, chat, classify
+from app.api.finance import anomalies, chat, classify, insights
 from app.api.career import router as career_router
 from app.api.elearning import router as elearning_router
 from app.config import settings
@@ -28,6 +28,7 @@ app = FastAPI(
 app.include_router(chat.router, prefix="/api/v1", tags=["chat"])
 app.include_router(classify.router, prefix="/api/v1", tags=["classify"])
 app.include_router(anomalies.router, prefix="/api/v1", tags=["anomalies"])
+app.include_router(insights.router, prefix="/api/v1", tags=["insights"])
 app.include_router(career_router, prefix="/api/v1/career", tags=["career"])
 app.include_router(elearning_router, prefix="/api/v1/elearning", tags=["elearning"])
 
