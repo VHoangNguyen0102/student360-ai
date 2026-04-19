@@ -108,10 +108,14 @@ def _score_name_match(query: str, row: dict[str, Any]) -> float:
 
 async def _query_scholarship_candidates(name_query: str, active_only: bool) -> list[dict[str, Any]]:
 	"""Two-pass candidate retrieval: targeted search first, then broader fallback."""
-	pool = await get_pool()
 	tokens = _tokenize(name_query)
 	like_pattern = f"%{name_query.strip()}%" if name_query.strip() else "%"
-
+	print(
+		f"[scholarship-search] like={like_pattern!r} tokens={tokens} active_only={active_only}",
+		flush=True,
+	)
+	pool = await get_pool()
+	print("[scholarship-search] db_pool_ready=True", flush=True)
 	async with pool.acquire() as conn:
 		targeted_rows = await conn.fetch(
 			"""
@@ -141,6 +145,7 @@ async def _query_scholarship_candidates(name_query: str, active_only: bool) -> l
 			like_pattern,
 			tokens,
 		)
+		print(f"[scholarship-search] targeted_rows={len(targeted_rows)}", flush=True)
 
 		if len(targeted_rows) >= 10:
 			return [dict(row) for row in targeted_rows]
@@ -163,6 +168,7 @@ async def _query_scholarship_candidates(name_query: str, active_only: bool) -> l
 			""",
 			active_only,
 		)
+		print(f"[scholarship-search] fallback_rows={len(fallback_rows)}", flush=True)
 		return [dict(row) for row in fallback_rows]
 
 
@@ -184,6 +190,11 @@ async def find_scholarship_id_by_name(
 		JSON string with best_match and ranked candidates.
 	"""
 	query = (scholarship_name or "").strip()
+	logger.info("find_scholarship_id_by_name_started", query=query)
+	print(
+		f"[scholarship-search] started query={query!r} active_only={active_only} max_results={max_results}",
+		flush=True,
+	)
 	if not query:
 		return json.dumps(
 			{
@@ -197,6 +208,8 @@ async def find_scholarship_id_by_name(
 
 	try:
 		rows = await _query_scholarship_candidates(query, active_only=active_only)
+		logger.info("find_scholarship_id_by_name_executed", query=query, candidate_count=len(rows))
+		print(f"[scholarship-search] query_completed candidate_count={len(rows)}", flush=True)
 		if not rows:
 			return json.dumps(
 				{
@@ -257,7 +270,8 @@ async def find_scholarship_id_by_name(
 
 		return json.dumps(payload, ensure_ascii=False)
 	except Exception as exc:  # pragma: no cover - defensive fallback for tool runtime
-		logger.error("find_scholarship_id_by_name_failed", error=str(exc), query=query)
+		logger.exception("find_scholarship_id_by_name_failed", query=query)
+		print(f"[scholarship-search] failed query={query!r} error={exc!r}", flush=True)
 		return json.dumps(
 			{
 				"error": f"KHÔNG TÌM THẤY HỌC BỔNG TRONG HỆ THỐNG!",
