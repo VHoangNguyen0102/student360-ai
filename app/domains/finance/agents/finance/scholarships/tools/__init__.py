@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.agents.finance.scholarships.tools.matching import (
+from app.domains.finance.agents.finance.scholarships.tools.matching import (
 	find_scholarship_id_by_name,
 	get_scholarship_details,
 )

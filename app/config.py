@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     # (Tuỳ code gọi LLM có thể fallback hoặc raise error.)
     GEMINI_API_KEY: str = ""
     GEMINI_LLM_MODEL: str = "gemini-2.5-flash-lite"
+    GEMINI_EMBEDDING_MODEL: str = "gemini-embedding-001"
 
     # PostgreSQL (shared với NestJS backend)
     # BẮT BUỘC: không có default ⇒ thiếu là app sẽ error khi tạo Settings().
