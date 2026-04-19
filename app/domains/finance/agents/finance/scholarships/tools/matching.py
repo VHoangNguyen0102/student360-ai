@@ -260,7 +260,7 @@ async def find_scholarship_id_by_name(
 		logger.error("find_scholarship_id_by_name_failed", error=str(exc), query=query)
 		return json.dumps(
 			{
-				"error": f"Lỗi tìm id học bổng: {str(exc)}",
+				"error": f"KHÔNG TÌM THẤY HỌC BỔNG TRONG HỆ THỐNG!",
 				"query": query,
 			},
 			ensure_ascii=False,

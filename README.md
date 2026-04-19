@@ -44,15 +44,20 @@ Elearning (stub):
 
 OpenAPI JSON:
 
-- http://localhost:8001/openapi.json
+- http://localhost:8000/openapi.json
 
 Swagger UI:
 
-- http://localhost:8001/docs
+- http://localhost:8000/docs
 
 ReDoc:
 
-- http://localhost:8001/redoc
+- http://localhost:8000/redoc
+
+## Activate
+```bash
+source venv/Scripts/activate
+```
 
 ## Quick Start
 
