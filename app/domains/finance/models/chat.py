@@ -11,11 +11,18 @@ class ContextHint(str, Enum):
     AUTO = "auto"
 
 
+class LlmProvider(str, Enum):
+    GEMINI = "gemini"
+    VERTEX_AI = "vertexai"
+    OLLAMA = "ollama"
+
+
 class ChatRequest(BaseModel):
     user_id: str
     session_id: Optional[str] = None
     message: str
     context_hint: ContextHint = ContextHint.AUTO
+    llm_provider: Optional[LlmProvider] = None
     metadata: Optional[dict] = None
 
 
@@ -33,4 +40,5 @@ class ChatResponse(BaseModel):
     # Intent classification metadata (for logging/debug — not used by frontend rendering)
     intent: Optional[str] = None        # knowledge_6jars | personal_finance | hybrid
     answer_mode: Optional[str] = None   # knowledge | personal | hybrid
+    provider_used: Optional[str] = None
 

@@ -14,11 +14,21 @@ from fastapi import APIRouter, Depends, HTTPException
 from langchain_core.messages import HumanMessage
 
 from app.domains.finance.agents.finance.agent import get_finance_agent
+from app.core.llm.runtime_provider import llm_provider_override
+from app.config import settings
 from app.domains.finance.models.chat import ChatRequest, ChatResponse, ChatUsage
 from app.utils.auth import verify_service_token
 
 logger = structlog.get_logger()
 router = APIRouter()
+
+
+def _resolve_model_name(provider: str) -> str:
+    if provider == "ollama":
+        return settings.OLLAMA_MODEL
+    if provider == "vertexai":
+        return settings.VERTEX_LLM_MODEL
+    return settings.GEMINI_LLM_MODEL
 
 
 def _format_vnd(amount: object) -> str:
@@ -164,13 +174,26 @@ async def chat(
     }
 
     start = time.monotonic()
+    provider_override = req.llm_provider.value if req.llm_provider else None
+    provider_used = provider_override or settings.LLM_PROVIDER
+    model_used = _resolve_model_name(provider_used)
+    logger.info(
+        "chat_request_started",
+        user_id=req.user_id,
+        session_id=session_id,
+        provider_used=provider_used,
+        model_used=model_used,
+        ollama_base_url=settings.OLLAMA_BASE_URL if provider_used == "ollama" else None,
+        message_len=len(req.message or ""),
+    )
     try:
-        result = await agent.ainvoke(
-            {
-                "messages": [HumanMessage(content=req.message)],
-            },
-            config=config,
-        )
+        with llm_provider_override(provider_override):
+            result = await agent.ainvoke(
+                {
+                    "messages": [HumanMessage(content=req.message)],
+                },
+                config=config,
+            )
     except Exception as exc:
         logger.error("agent_invoke_failed", error=str(exc), user_id=req.user_id)
         err = str(exc)
@@ -198,8 +221,21 @@ async def chat(
         session_id=session_id,
         intent=intent,
         answer_mode=answer_mode,
+        provider_used=provider_used,
+        model_used=model_used,
         latency_ms=latency_ms,
     )
+
+    if provider_used == "ollama" and latency_ms >= 120_000:
+        logger.warning(
+            "chat_request_slow_local",
+            user_id=req.user_id,
+            session_id=session_id,
+            provider_used=provider_used,
+            model_used=model_used,
+            latency_ms=latency_ms,
+            note="Local model is slow on current hardware or prompt complexity.",
+        )
 
     # Logging tool usage and debug
     for msg in messages:
@@ -254,4 +290,5 @@ async def chat(
         usage=usage,
         intent=intent,
         answer_mode=answer_mode,
+        provider_used=provider_used,
     )

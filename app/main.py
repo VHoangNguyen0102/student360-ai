@@ -12,7 +12,15 @@ logger = structlog.get_logger()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("student360-ai starting", env=settings.ENV)
+    logger.info(
+        "student360-ai starting",
+        env=settings.ENV,
+        llm_provider_default=settings.LLM_PROVIDER,
+        gemini_model=settings.GEMINI_LLM_MODEL,
+        vertex_model=settings.VERTEX_LLM_MODEL,
+        ollama_model=settings.OLLAMA_MODEL,
+        ollama_base_url=settings.OLLAMA_BASE_URL,
+    )
     yield
     await close_pool()
     logger.info("student360-ai shutting down")

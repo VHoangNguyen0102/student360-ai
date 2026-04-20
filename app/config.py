@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     VERTEX_AI_PROJECT: str = ""
     VERTEX_AI_LOCATION: str = "us-central1"
     VERTEX_LLM_MODEL: str = "gemini-2.5-flash-lite"
-    GOOGLE_APPLICATION_CREDENTIALS: str = "/app/gcp-credentials.json"
+    VERTEX_API_KEY: str = ""
 
     # PostgreSQL (shared with NestJS backend)
     DATABASE_URL: str  # postgresql+asyncpg://user:pass@host/db
