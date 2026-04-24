@@ -29,3 +29,6 @@ htmlcov/
 
 # Logs
 *.log
+
+# Secrets
+student360-*.json

@@ -22,6 +22,6 @@ services:
 volumes:
   ollama_data:
 
-# PostgreSQL and Redis are NOT defined here.
-# They are shared from the NestJS backend docker-compose.
-# Connect via external network or host IP.
+    # PostgreSQL and Redis are NOT defined here.
+    # They are shared from the NestJS backend docker-compose.
+    # Connect via external network or host IP.

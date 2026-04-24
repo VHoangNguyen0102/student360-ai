@@ -24,25 +24,23 @@ class Settings(BaseSettings):
     # Môi trường triển khai. Thường dùng để bật/tắt logging, strictness, v.v.
     ENV: Literal["local", "staging", "production"] = "local"
 
-    # Chọn nhà cung cấp LLM:
-    # - gemini: gọi Google Gemini qua API key
-    # - ollama: gọi model chạy local thông qua Ollama server
-    LLM_PROVIDER: Literal["gemini", "ollama"] = "gemini"
-
-    # Khi LLM_PROVIDER=ollama, app sẽ gọi tới Ollama server tại URL này.
-    # - Chạy local: http://127.0.0.1:11434
-    # - Chạy trong docker-compose (profile local-llm): thường dùng http://ollama:11434
+    # LLM provider: gemini, vertexai, or ollama
+    LLM_PROVIDER: Literal["gemini", "vertexai", "ollama"] = "gemini"
     OLLAMA_BASE_URL: str = "http://127.0.0.1:11434"
 
     # Tên model Ollama (ví dụ: qwen2.5:3b). Phải được `ollama pull` sẵn.
     OLLAMA_MODEL: str = "qwen2.5:3b"
 
-    # Gemini (dùng khi LLM_PROVIDER=gemini)
-    # Lưu ý: GEMINI_API_KEY để trống sẽ khiến call tới Gemini thất bại.
-    # (Tuỳ code gọi LLM có thể fallback hoặc raise error.)
+    # Gemini (used when LLM_PROVIDER=gemini)
+    # Supports multiple keys for quota rotation: GEMINI_API_KEY=key1,key2,key3
     GEMINI_API_KEY: str = ""
-    GEMINI_LLM_MODEL: str = "gemini-2.5-flash-lite"
-    GEMINI_EMBEDDING_MODEL: str = "gemini-embedding-001"
+    GEMINI_LLM_MODEL: str = "gemini-2.0-flash-lite"
+
+    # Vertex AI (used when LLM_PROVIDER=vertexai)
+    VERTEX_AI_PROJECT: str = ""
+    VERTEX_AI_LOCATION: str = "us-central1"
+    VERTEX_LLM_MODEL: str = "gemini-2.5-flash-lite"
+    VERTEX_API_KEY: str = ""
 
     # PostgreSQL (shared với NestJS backend)
     # BẮT BUỘC: không có default ⇒ thiếu là app sẽ error khi tạo Settings().

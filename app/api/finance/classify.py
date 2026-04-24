@@ -49,12 +49,20 @@ async def classify(
             keyword,
         )
     if pref:
-        logger.debug("classify_preference_hit", keyword=keyword, jar_code=pref["jar_code"])
-        return ClassifyResponse(
+        result = ClassifyResponse(
             suggested_jar_code=pref["jar_code"],
             confidence=1.0,
             source=ClassifySource.PREFERENCE,
         )
+        logger.info(
+            "classify_response",
+            user_id=req.user_id,
+            description=req.description,
+            suggested_jar_code=result.suggested_jar_code,
+            confidence=result.confidence,
+            source=result.source,
+        )
+        return result
 
     # ────────────────────────────────────────────
     # Step 2: LLM fallback
@@ -76,25 +84,35 @@ async def classify(
         )
         content = response.content
     except Exception as exc:
-        logger.warning("classify_llm_failed", error=str(exc))
-        return ClassifyResponse(
+        logger.warning("classify_llm_failed", error=str(exc), user_id=req.user_id)
+        result = ClassifyResponse(
             suggested_jar_code="essentials",
             confidence=0.0,
             source=ClassifySource.AI,
         )
+        logger.info(
+            "classify_response",
+            user_id=req.user_id,
+            description=req.description,
+            suggested_jar_code=result.suggested_jar_code,
+            confidence=result.confidence,
+            source=result.source,
+            error=str(exc),
+        )
+        return result
 
     # Parse JSON response
+    logger.debug("classify_llm_raw", content=content, user_id=req.user_id)
     jar_code, confidence = "essentials", 0.0
     try:
         match_json = None
-        for start in range(len(content)):
-            if content[start] == "{":
-                try:
-                    parsed = json.loads(content[start:])
-                    match_json = parsed
-                    break
-                except json.JSONDecodeError:
-                    continue
+        start = content.find("{")
+        end = content.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            try:
+                match_json = json.loads(content[start : end + 1])
+            except json.JSONDecodeError:
+                logger.warning("classify_json_parse_failed", raw=content[start : end + 1], user_id=req.user_id)
         if match_json:
             jar_code = match_json.get("jar_code", "essentials")
             confidence = float(match_json.get("confidence", 0.0))
@@ -102,17 +120,27 @@ async def classify(
         pass
 
     if confidence < CONFIDENCE_THRESHOLD:
-        return ClassifyResponse(
+        result = ClassifyResponse(
             suggested_jar_code=None,
             confidence=confidence,
             source=ClassifySource.AI,
         )
+    else:
+        result = ClassifyResponse(
+            suggested_jar_code=jar_code,
+            confidence=confidence,
+            source=ClassifySource.AI,
+        )
 
-    return ClassifyResponse(
-        suggested_jar_code=jar_code,
-        confidence=confidence,
-        source=ClassifySource.AI,
+    logger.info(
+        "classify_response",
+        user_id=req.user_id,
+        description=req.description,
+        suggested_jar_code=result.suggested_jar_code,
+        confidence=result.confidence,
+        source=result.source,
     )
+    return result
 
 
 @router.post("/classify/override", status_code=204)

@@ -17,11 +17,21 @@ from fastapi import APIRouter, Depends, HTTPException
 from langchain_core.messages import HumanMessage
 
 from app.domains.finance.agents.finance.agent import get_finance_agent
+from app.core.llm.runtime_provider import llm_provider_override
+from app.config import settings
 from app.domains.finance.models.chat import ChatRequest, ChatResponse, ChatUsage
 from app.utils.auth import verify_service_token
 
 logger = structlog.get_logger()
 router = APIRouter()
+
+
+def _resolve_model_name(provider: str) -> str:
+    if provider == "ollama":
+        return settings.OLLAMA_MODEL
+    if provider == "vertexai":
+        return settings.VERTEX_LLM_MODEL
+    return settings.GEMINI_LLM_MODEL
 
 
 def _format_vnd(amount: object) -> str:
@@ -155,7 +165,7 @@ async def chat(
     req: ChatRequest,
     _: str = Depends(verify_service_token),
 ) -> ChatResponse:
-    """Multi-turn chat with Finance agent."""
+    """Multi-turn chat with Finance agent (6 Jars knowledge + personal data)."""
     session_id = req.session_id or str(uuid.uuid4())
     agent = get_finance_agent()
 
@@ -167,13 +177,26 @@ async def chat(
     }
 
     start = time.monotonic()
+    provider_override = req.llm_provider.value if req.llm_provider else None
+    provider_used = provider_override or settings.LLM_PROVIDER
+    model_used = _resolve_model_name(provider_used)
+    logger.info(
+        "chat_request_started",
+        user_id=req.user_id,
+        session_id=session_id,
+        provider_used=provider_used,
+        model_used=model_used,
+        ollama_base_url=settings.OLLAMA_BASE_URL if provider_used == "ollama" else None,
+        message_len=len(req.message or ""),
+    )
     try:
-        result = await agent.ainvoke(
-            {
-                "messages": [HumanMessage(content=req.message)],
-            },
-            config=config,
-        )
+        with llm_provider_override(provider_override):
+            result = await agent.ainvoke(
+                {
+                    "messages": [HumanMessage(content=req.message)],
+                },
+                config=config,
+            )
     except Exception as exc:
         logger.error("agent_invoke_failed", error=str(exc), user_id=req.user_id)
         err = str(exc)
@@ -191,6 +214,32 @@ async def chat(
     if not messages:
         raise HTTPException(status_code=500, detail="Agent returned no messages")
 
+    # Extract intent and answer_mode from agent result (for logging/debug)
+    intent: str | None = result.get("intent")
+    answer_mode: str | None = result.get("answer_mode")
+
+    logger.info(
+        "chat_request_processed",
+        user_id=req.user_id,
+        session_id=session_id,
+        intent=intent,
+        answer_mode=answer_mode,
+        provider_used=provider_used,
+        model_used=model_used,
+        latency_ms=latency_ms,
+    )
+
+    if provider_used == "ollama" and latency_ms >= 120_000:
+        logger.warning(
+            "chat_request_slow_local",
+            user_id=req.user_id,
+            session_id=session_id,
+            provider_used=provider_used,
+            model_used=model_used,
+            latency_ms=latency_ms,
+            note="Local model is slow on current hardware or prompt complexity.",
+        )
+
     # Logging tool usage and debug
     for msg in messages:
         if hasattr(msg, "tool_calls") and msg.tool_calls:
@@ -200,17 +249,27 @@ async def chat(
                     args = tc.get("args")
                 else:
                     args = getattr(tc, "args", None)
-                logger.info("tool_used", tool=tool_name, args=args, user_id=req.user_id)
-        logger.info("debug_message", type=msg.type, content_len=len(str(msg.content)), content_preview=str(msg.content)[:100])
+                logger.info("tool_used", tool=tool_name, args=args, user_id=req.user_id, intent=intent)
+        logger.info(
+            "debug_message",
+            type=msg.type,
+            content_len=len(str(msg.content)),
+            content_preview=str(msg.content)[:100],
+        )
 
     reply = messages[-1].content
     if isinstance(reply, list):
-        reply = " ".join([str(block.get("text", "")) for block in reply if isinstance(block, dict) and "text" in block])
+        reply = " ".join(
+            [str(block.get("text", "")) for block in reply if isinstance(block, dict) and "text" in block]
+        )
     elif not isinstance(reply, str):
         reply = str(reply)
 
     if not reply or not reply.strip():
-        reply = _synthesise_reply_from_tools(messages) or "Xin lỗi, tôi chưa thể tổng hợp kết quả. Vui lòng thử lại."
+        reply = (
+            _synthesise_reply_from_tools(messages)
+            or "Xin lỗi, tôi chưa thể tổng hợp kết quả. Vui lòng thử lại."
+        )
 
     # Extract token usage from the last AI message if available
     usage_meta = getattr(messages[-1], "usage_metadata", None)
@@ -232,5 +291,7 @@ async def chat(
         session_id=session_id,
         agent_used=agent_used,
         usage=usage,
+        intent=intent,
+        answer_mode=answer_mode,
+        provider_used=provider_used,
     )
-
