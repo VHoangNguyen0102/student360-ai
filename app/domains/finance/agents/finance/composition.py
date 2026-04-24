@@ -16,15 +16,25 @@ from app.domains.finance.agents.finance.six_jars.prompts_agent import get_financ
 from app.domains.finance.agents.finance.six_jars.tools import ALL_SIX_JARS_TOOLS
 
 
-def get_finance_tools() -> list[Any]:
-    """All LangChain tools exposed to the finance chat agent."""
-    return [*ALL_SIX_JARS_TOOLS, *ALL_SCHOLARSHIP_TOOLS]
+def get_finance_tools(mode: str | None = None) -> list[Any]:
+    """All LangChain tools exposed to the finance chat agent.
+
+    Mode is controlled by `FINANCE_AGENT_MODE` (env) by default.
+    """
+    selected = (mode or settings.FINANCE_AGENT_MODE or "six_jars").strip().lower()
+
+    if selected == "scholarships":
+        return [*ALL_SCHOLARSHIP_TOOLS]
+    if selected == "combined":
+        return [*ALL_SIX_JARS_TOOLS, *ALL_SCHOLARSHIP_TOOLS]
+    # default: six_jars
+    return [*ALL_SIX_JARS_TOOLS]
 
 
-def get_finance_system_prompt() -> str:
+def get_finance_system_prompt(mode: str | None = None) -> str:
     """
     System prompt for the finance agent.
-    Today: six-jars only. Later: append or branch using get_scholarship_system_prompt().
+    Controlled by `FINANCE_AGENT_MODE` (env) by default.
     """
     return (
         _six_jars_system_prompt().rstrip()
