@@ -1,0 +1,39 @@
+﻿============================================================
+SEED: scholarship data for application ea120835
+============================================================
+
+[1] Th├¬m scholarship_requirements (GPA, Kinh nghiem du an)...
+  ~ GPA requirement already exists, skip
+  ~ Project requirement already exists, skip
+
+[2] Th├¬m scholarship_documents (Thu gioi thieu, optional)...
+  ~ Thu gioi thieu doc already exists, skip
+
+[3] Cß║¡p nhß║¡t submitted docs (CV=approved, Bang diem=rejected)...
+  * Updated CV (id=7a4929a8-9964-458a-a6bf-a2648c5898bf) -> approved
+  * Updated Bang diem (id=e6d4a629-c866-496c-b855-e1dd768e7d92) -> rejected
+
+[4] Th├¬m scholarship_reviews (2 rounds)...
+  + Added round 1 review (eligibility_check, approved): id=77a7c4e2-0627-47d6-9bce-648d485e9c6f
+  + Added round 2 review (document_review, pending): id=d32c25d0-9de0-4498-b385-b14aeb7ea541
+
+[5] Cß║¡p nhß║¡t feedback v├á reviewer_id trong student_scholarships...
+  * Updated student_scholarships feedback + reviewer_id
+
+============================================================
+VERIFY: trß║íng th├íi sau khi seed
+============================================================
+  scholarship_requirements : 4
+  scholarship_documents    : 3
+  submitted docs           : 2
+  review rounds            : 2
+
+  Submitted docs detail:
+    [approved] CV: CV trinh bay ro rang, co kinh nghiem du an thuc te phu hop v...
+    [rejected] Bang diem: GPA hoc ky gan nhat la 2.85/4.0, chua dat nguong toi thieu 3...
+
+  Reviews detail:
+    [eligibility_check] approved: Ho so nop day du tai lieu bat buoc. CV tot, co kinh nghiem d...
+    [document_review] pending: Bang diem hoc ky 1/2025 cho thay GPA 2.85, chua dat nguong 3...
+
+Done! Seed completed successfully.

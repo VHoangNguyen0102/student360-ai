@@ -1,11 +1,17 @@
 """Scholarship application tools -- ho so xin hoc bong cua sinh vien.
 
-NOTE: Ten bang `scholarship_applications` va cac cot ben duoi la GIA DINH (mock).
-Khi co schema DB chinh thuc, refactor lai ten bang / cot tuong ung.
+Schema thuc te (tu s360-backend entities):
+  student_scholarships       -- ho so apply hoc bong cua sinh vien
+  student_scholarship_documents -- tai lieu sinh vien da nop
+  scholarship_documents      -- danh sach tai lieu yeu cau cua hoc bong
+  scholarship_requirements   -- dieu kien/yeu cau cua hoc bong
+  scholarship_reviews        -- lich su xet duyet (theo stage)
 
 Tools:
-  get_current_scholarship_application -- Lay ho so hoc bong dang pending cua sinh vien
-                                         (tu dong tim, khong can truyen ID)
+  get_my_scholarship_applications    -- Lay danh sach hoc bong sinh vien da apply
+                                        (tat ca, co the loc theo status)
+  get_scholarship_application_detail -- Lay chi tiet 1 ho so apply + tai lieu da nop
+                                        + lich su xet duyet
 """
 
 from __future__ import annotations
@@ -50,324 +56,390 @@ def _uid(config: RunnableConfig) -> str:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Mock data -- dung khi DB chua co bang thuc
-# Xoa / comment block nay khi co schema that
-#
-# 1 ho so duy nhat voi day du thong tin sinh vien + tai lieu da nop chi tiet
-# de LLM co the dua ra tu van ca nhan hoa ma khong can hoi nguoc lai nguoi dung.
-# ──────────────────────────────────────────────────────────────────────────────
-
-_MOCK_PENDING_APPLICATION: dict[str, Any] = {
-    "id": "aaaaaaaa-0001-0001-0001-000000000002",
-    "scholarship_id": "bbbbbbbb-0001-0001-0001-000000000002",
-    "scholarship_name": "Hoc bong Vuot kho Vuon len 2024",
-    "provider": "Quy Ho tro Sinh vien - Truong DH KHTN TP.HCM",
-    "status": "pending",
-    "applied_at": "2025-02-15T09:30:00",
-    "reviewed_at": None,
-    "amount_awarded": None,
-    "currency": "VND",
-    "rejection_reason": None,
-    "notes": "Ho so dang trong giai doan tham dinh lan 2 boi Phong Cong tac Sinh vien.",
-    # Thong tin sinh vien nop don
-    "student_profile": {
-        "full_name": "Nguyen Van An",
-        "student_id": "21120001",
-        "email": "21120001@student.hcmus.edu.vn",
-        "phone": "0901234567",
-        "major": "Khoa hoc May tinh",
-        "faculty": "Khoa Cong nghe Thong tin",
-        "year_of_study": 3,
-        "enrollment_status": "active",
-        "academic": {
-            "gpa_latest_semester": 3.42,
-            "gpa_cumulative": 3.38,
-            "gpa_scale": 4.0,
-            "drl_latest_semester": 85,
-            "drl_classification": "Tot",
-            "credits_completed": 90,
-            "credits_total_program": 150,
-            "academic_warnings": 0,
-            "academic_rank": "Kha",
-        },
-        "socioeconomic": {
-            "household_income_monthly_vnd": 3800000,
-            "income_per_capita_monthly_vnd": 950000,
-            "household_size": 4,
-            "household_classification": "Can ngheo",
-            "poverty_cert_issued_by": "UBND Phuong 5, Quan Binh Thanh, TP.HCM",
-            "poverty_cert_valid_until": "2025-12-31",
-            "living_situation": "O tro xa nha",
-            "monthly_living_cost_vnd": 4200000,
-            "has_part_time_job": True,
-            "part_time_income_monthly_vnd": 2500000,
-            "part_time_job_description": "Gia su toan, 3 buoi/tuan",
-        },
-        "family_background": {
-            "father_status": "Mat suc lao dong (tai nan lao dong nam 2021, mat 65% suc lao dong)",
-            "mother_status": "Lam noi tro, thu nhap khong on dinh (ban hang online)",
-            "siblings": [
-                {
-                    "relation": "Em gai",
-                    "age": 16,
-                    "education": "Hoc sinh THPT",
-                    "receiving_scholarship": True,
-                }
-            ],
-            "special_circumstances": (
-                "Cha bi tai nan lao dong nam 2021, mat 65% suc lao dong. "
-                "Gia dinh phu thuoc vao tro cap BHXH 1.800.000 VND/thang va thu nhap bat on cua me. "
-                "Sinh vien tu trang trai phan lon chi phi hoc tap va sinh hoat bang viec lam them."
-            ),
-        },
-        "achievements": [
-            {
-                "title": "Giai Ba - Cuoc thi Lap trinh ACM-ICPC cap truong 2023",
-                "issued_by": "Khoa CNTT - DH KHTN",
-                "year": 2023,
-            },
-            {
-                "title": "Tinh nguyen vien - Chien dich Mua he Xanh 2023",
-                "issued_by": "Doan Thanh nien DH KHTN",
-                "year": 2023,
-                "volunteer_hours": 120,
-            },
-            {
-                "title": "Chung chi TOEIC 650",
-                "issued_by": "IIG Vietnam",
-                "year": 2024,
-            },
-        ],
-    },
-    # Danh gia so bo tu can bo Phong CTSV
-    "preliminary_assessment": {
-        "assessed_by": "Can bo Phong CTSV - Tran Thi Bich",
-        "assessed_at": "2025-03-01T14:00:00",
-        "meets_gpa_threshold": True,
-        "meets_drl_threshold": True,
-        "meets_income_threshold": True,
-        "completeness_score": 95,
-        "missing_items": ["Xac nhan BHXH cua cha (bo sung truoc 20/03/2025)"],
-        "notes_for_committee": (
-            "Sinh vien dap ung du dieu kien co ban (GPA >= 3.2, DRL >= 80, thu nhap binh quan < 1.500.000 VND/nguoi/thang). "
-            "Hoan canh cha mat suc lao dong da duoc xac minh. "
-            "Cho bo sung ban xac nhan BHXH de hoan chinh ho so."
-        ),
-    },
-    # Tai lieu da nop kem content_summary chi tiet
-    "submitted_documents": [
-        {
-            "document_name": "Bang diem HK1 2024-2025",
-            "document_type": "transcript",
-            "submitted_at": "2025-02-15T09:35:00",
-            "status": "accepted",
-            "reviewer_note": "Bang diem hop le, co dau do Phong Dao tao. GPA 3.42/4.0.",
-            "content_summary": {
-                "semester": "HK1 2024-2025",
-                "gpa": 3.42,
-                "total_credits": 18,
-                "passed_credits": 18,
-                "failed_subjects": [],
-                "subjects": [
-                    {"name": "Tri tue Nhan tao", "credits": 3, "grade": "A", "gpa_point": 4.0},
-                    {"name": "Mang May tinh", "credits": 3, "grade": "B+", "gpa_point": 3.5},
-                    {"name": "Ky nghe Phan mem", "credits": 3, "grade": "A-", "gpa_point": 3.7},
-                    {"name": "Co so Du lieu Nang cao", "credits": 3, "grade": "B+", "gpa_point": 3.5},
-                    {"name": "Kinh te Dai cuong", "credits": 3, "grade": "B", "gpa_point": 3.0},
-                    {"name": "Giao duc The chat", "credits": 3, "grade": "A", "gpa_point": 4.0},
-                ],
-            },
-        },
-        {
-            "document_name": "Giay xac nhan sinh vien dang hoc",
-            "document_type": "enrollment_cert",
-            "submitted_at": "2025-02-15T09:38:00",
-            "status": "accepted",
-            "reviewer_note": "Hop le, con hieu luc den 31/08/2025.",
-            "content_summary": {
-                "issued_by": "Phong Dao tao - DH KHTN TP.HCM",
-                "issue_date": "2025-02-10",
-                "valid_until": "2025-08-31",
-                "confirms": "Sinh vien nam 3, he chinh quy, chua bi canh cao hoc vu.",
-            },
-        },
-        {
-            "document_name": "Giay xac nhan ho can ngheo",
-            "document_type": "poverty_cert",
-            "submitted_at": "2025-02-15T09:42:00",
-            "status": "accepted",
-            "reviewer_note": "Xac nhan can ngheo con hieu luc. Thu nhap binh quan 950.000 VND/nguoi/thang.",
-            "content_summary": {
-                "classification": "Ho can ngheo",
-                "issued_by": "UBND Phuong 5, Quan Binh Thanh, TP.HCM",
-                "issue_date": "2025-01-10",
-                "valid_until": "2025-12-31",
-                "income_per_capita_monthly_vnd": 950000,
-                "household_size": 4,
-            },
-        },
-        {
-            "document_name": "Don xin hoc bong (tu viet tay)",
-            "document_type": "application_letter",
-            "submitted_at": "2025-02-15T09:45:00",
-            "status": "accepted",
-            "reviewer_note": "Don trinh bay ro rang, co chu ky va xac nhan Khoa.",
-            "content_summary": {
-                "stated_purpose": (
-                    "Sinh vien trinh bay hoan canh cha mat suc lao dong do tai nan, "
-                    "me thu nhap khong on dinh. Mong muon nhan hoc bong de trang trai "
-                    "hoc phi va tap trung hoc tap, huong toi tot nghiep loai Gioi."
-                ),
-                "commitment": "Cam ket duy tri GPA >= 3.2 va DRL >= 80 trong cac hoc ky tiep theo.",
-                "signed_by_faculty": True,
-                "faculty_endorsement": (
-                    "Khoa CNTT xac nhan sinh vien co tinh than hoc tap tot, "
-                    "tich cuc tham gia hoat dong Doan."
-                ),
-            },
-        },
-        {
-            "document_name": "Xac nhan BHXH cua cha (bo sung)",
-            "document_type": "social_insurance_cert",
-            "submitted_at": None,
-            "status": "missing",
-            "reviewer_note": (
-                "Chua nop. Han bo sung: 20/03/2025. "
-                "Neu khong nop, ho so se bi loai khoi vong xet duyet."
-            ),
-            "content_summary": None,
-        },
-    ],
-}
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# DB helper (se thay the mock khi co schema that)
-# ──────────────────────────────────────────────────────────────────────────────
-
-
-async def _fetch_pending_application_from_db(user_id: str) -> dict[str, Any] | None:
-    """
-    Lay don hoc bong dang pending cua sinh vien tu DB.
-
-    TODO: Thay ten bang va cac cot khi co schema that.
-          Hien tai raise NotImplementedError de roi vao mock fallback.
-    """
-    raise NotImplementedError("DB table name not confirmed -- using mock data")
-
-    # --- Template SQL de refactor sau ---
-    # pool = await get_pool()
-    # async with pool.acquire() as conn:
-    #     row = await conn.fetchrow(
-    #         """
-    #         SELECT sa.id,
-    #                sa.scholarship_id,
-    #                s.name               AS scholarship_name,
-    #                s.provider,
-    #                sa.status,
-    #                sa.applied_at,
-    #                sa.reviewed_at,
-    #                sa.amount_awarded,
-    #                sa.currency,
-    #                sa.rejection_reason,
-    #                sa.notes
-    #         FROM   scholarship_applications sa   -- TODO: xac nhan ten bang
-    #         JOIN   scholarships s ON s.id = sa.scholarship_id
-    #         WHERE  sa.user_id    = $1
-    #           AND  sa.status     = 'pending'
-    #           AND  sa.is_deleted = false
-    #         ORDER  BY sa.applied_at DESC
-    #         LIMIT  1
-    #         """,
-    #         user_id,
-    #     )
-    #
-    #     if row is None:
-    #         return None
-    #
-    #     application = dict(row)
-    #
-    #     # Lay tai lieu da nop
-    #     docs = await conn.fetch(
-    #         """
-    #         SELECT document_name,
-    #                document_type,
-    #                submitted_at,
-    #                status,
-    #                reviewer_note
-    #         FROM   scholarship_application_documents   -- TODO: xac nhan ten bang
-    #         WHERE  application_id = $1
-    #         ORDER  BY submitted_at ASC NULLS LAST
-    #         """,
-    #         str(row["id"]),
-    #     )
-    #     application["submitted_documents"] = [dict(d) for d in docs]
-    #     return application
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Tool: Lay ho so hoc bong dang pending cua sinh vien hien tai
+# Tool 1: Lay danh sach tat ca don hoc bong sinh vien da apply
 # ──────────────────────────────────────────────────────────────────────────────
 
 
 @tool
-async def get_current_scholarship_application(config: RunnableConfig) -> str:
+async def get_my_scholarship_applications(
+    config: RunnableConfig,
+    status_filter: str = "",
+) -> str:
     """
-    Lay thong tin day du ho so xin hoc bong dang cho xet duyet (pending)
-    cua sinh vien dang dang nhap. Moi sinh vien chi co the dang apply
-    mot hoc bong tai mot thoi diem, nen khong can truyen ID.
+    Lấy danh sách tất cả hồ sơ xin học bổng của sinh viên đang đăng nhập.
 
-    Tra ve:
-    - Thong tin hoc bong dang apply (ten, don vi cap, trang thai)
-    - Ho so sinh vien day du: hoc luc (GPA, DRL), hoan canh kinh te,
-      hoan canh gia dinh, thanh tich noi bat
-    - Danh gia so bo tu can bo xet duyet (co / khong du tieu chi, muc do hoan chinh)
-    - Danh sach tai lieu da nop va tung tai lieu: trang thai (accepted / missing),
-      ghi chu cua nguoi xet duyet, noi dung chi tiet (content_summary)
+    Args:
+        status_filter: Lọc theo trạng thái hồ sơ. Các giá trị hợp lệ:
+            - "" (chuỗi rỗng): lấy tất cả
+            - "draft": bản nháp, chưa nộp
+            - "submitted": đã nộp, chờ xét duyệt
+            - "under_review" hoặc "reviewing": đang trong quá trình xét duyệt
+            - "approved": đã được phê duyệt
+            - "rejected": bị từ chối
+            - "awarded": đã nhận học bổng
+            - "cancelled": đã hủy
 
-    Su dung tool nay khi sinh vien hoi ve: ti le thanh cong, trang thai ho so,
-    tai lieu con thieu, nhan xet ve hoc luc / hoan canh, kha nang duoc duyet.
+    Trả về:
+        Danh sách hồ sơ apply với thông tin: tên học bổng, nhà cung cấp,
+        trạng thái, ngày nộp, ngày quyết định, số tiền học bổng, ghi chú.
+
+    Sử dụng tool này khi sinh viên hỏi:
+        - "Tôi đang apply học bổng nào?"
+        - "Học bổng của tôi đang ở trạng thái gì?"
+        - "Tôi có hồ sơ học bổng nào đang chờ xét duyệt không?"
     """
     user_id = _uid(config)
+    status = (status_filter or "").strip().lower()
 
-    try:
-        application = await _fetch_pending_application_from_db(user_id)
-    except NotImplementedError:
-        logger.warning("get_current_scholarship_application_using_mock", user_id=user_id)
-        application = _MOCK_PENDING_APPLICATION
-    except Exception as exc:
-        logger.error("get_current_scholarship_application_failed", error=str(exc), user_id=user_id)
-        return json.dumps(
-            {"error": f"Loi truy van ho so hoc bong: {str(exc)}"},
-            ensure_ascii=False,
-        )
+    # Normalize alias: DB dung 'under_review' thay vi 'reviewing'
+    if status == "reviewing":
+        status = "under_review"
 
-    if application is None:
+    valid_statuses = {"draft", "submitted", "under_review", "approved", "rejected", "awarded", "cancelled"}
+    if status and status not in valid_statuses:
         return json.dumps(
             {
-                "user_id": user_id,
-                "message": (
-                    "Hien tai sinh vien khong co don xin hoc bong nao dang cho xet duyet. "
-                    "Co the sinh vien chua nop don hoac don da duoc xu ly xong."
-                ),
+                "error": f"status_filter không hợp lệ: '{status}'. Giá trị hợp lệ: {sorted(valid_statuses)}",
             },
             ensure_ascii=False,
         )
 
-    # Tinh nhanh tong ket tai lieu
-    docs: list[dict[str, Any]] = application.get("submitted_documents", [])
-    doc_summary = {
-        "total": len(docs),
-        "accepted": sum(1 for d in docs if d.get("status") == "accepted"),
-        "missing": sum(1 for d in docs if d.get("status") == "missing"),
-        "pending": sum(1 for d in docs if d.get("status") == "pending"),
-    }
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            if status:
+                rows = await conn.fetch(
+                    """
+                    SELECT
+                        ss.id,
+                        ss.scholarship_id,
+                        s.name               AS scholarship_name,
+                        s.provider,
+                        s.amount             AS scholarship_amount,
+                        s.currency           AS scholarship_currency,
+                        ss.status,
+                        ss.application_date,
+                        ss.decision_date,
+                        ss.awarded_amount,
+                        ss.currency,
+                        ss.submitted_form_url,
+                        ss.note,
+                        ss.feedback,
+                        ss.created_at,
+                        ss.updated_at
+                    FROM   student_scholarships ss
+                    JOIN   scholarships s ON s.id = ss.scholarship_id
+                    WHERE  ss.user_id = $1
+                      AND  ss.status  = $2
+                    ORDER  BY ss.created_at DESC
+                    """,
+                    user_id,
+                    status,
+                )
+            else:
+                rows = await conn.fetch(
+                    """
+                    SELECT
+                        ss.id,
+                        ss.scholarship_id,
+                        s.name               AS scholarship_name,
+                        s.provider,
+                        s.amount             AS scholarship_amount,
+                        s.currency           AS scholarship_currency,
+                        ss.status,
+                        ss.application_date,
+                        ss.decision_date,
+                        ss.awarded_amount,
+                        ss.currency,
+                        ss.submitted_form_url,
+                        ss.note,
+                        ss.feedback,
+                        ss.created_at,
+                        ss.updated_at
+                    FROM   student_scholarships ss
+                    JOIN   scholarships s ON s.id = ss.scholarship_id
+                    WHERE  ss.user_id = $1
+                    ORDER  BY ss.created_at DESC
+                    """,
+                    user_id,
+                )
 
-    payload = {
-        "user_id": user_id,
-        "application": _serialize(application),
-        "document_summary": doc_summary,
-        "_data_source": "mock -- cho xac nhan schema DB thuc",
-    }
+        if not rows:
+            msg = (
+                f"Không tìm thấy hồ sơ học bổng nào với trạng thái '{status}'."
+                if status
+                else "Sinh viên chưa có hồ sơ xin học bổng nào trong hệ thống."
+            )
+            return json.dumps(
+                {"user_id": user_id, "applications": [], "total": 0, "message": msg},
+                ensure_ascii=False,
+            )
 
-    return json.dumps(payload, ensure_ascii=False)
+        applications = [_serialize(dict(r)) for r in rows]
+
+        # Thong ke nhanh theo status
+        status_counts: dict[str, int] = {}
+        for app in applications:
+            s = app.get("status", "unknown")
+            status_counts[s] = status_counts.get(s, 0) + 1
+
+        return json.dumps(
+            {
+                "user_id": user_id,
+                "total": len(applications),
+                "status_counts": status_counts,
+                "filter_applied": status or "none",
+                "applications": applications,
+            },
+            ensure_ascii=False,
+        )
+
+    except Exception as exc:
+        logger.error("get_my_scholarship_applications_failed", error=str(exc), user_id=user_id)
+        return json.dumps(
+            {"error": f"Lỗi truy vấn danh sách hồ sơ học bổng: {str(exc)}"},
+            ensure_ascii=False,
+        )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Tool 2: Lay chi tiet 1 ho so apply (bao gom tai lieu, lich su xet duyet,
+#         va yeu cau cua hoc bong) -- dung cho LLM du doan ty le trung tuyen
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+@tool
+async def get_scholarship_application_detail(
+    application_id: str,
+    config: RunnableConfig,
+) -> str:
+    """
+    Lấy thông tin đầy đủ của một hồ sơ xin học bổng cụ thể, bao gồm:
+      - Thông tin hồ sơ apply: trạng thái, ngày nộp, ghi chú, phản hồi
+      - Thông tin học bổng: tên, nhà cung cấp, số tiền, điều kiện xét tuyển,
+        danh sách yêu cầu (scholarship_requirements) và tài liệu yêu cầu
+        (scholarship_documents)
+      - Tài liệu sinh viên đã nộp (student_scholarship_documents): tên tài liệu,
+        URL, trạng thái (pending/approved/rejected), ghi chú của người xét duyệt
+      - Lịch sử xét duyệt (scholarship_reviews): giai đoạn, trạng thái, nhận xét
+
+    Thông tin này dùng để LLM phân tích và dự đoán tỉ lệ trúng tuyển học bổng
+    bằng cách so sánh hồ sơ sinh viên với yêu cầu của học bổng.
+
+    Args:
+        application_id: UUID của hồ sơ apply (lấy từ get_my_scholarship_applications).
+
+    Sử dụng tool này khi:
+        - Sinh viên hỏi về tỉ lệ trúng tuyển / khả năng được duyệt
+        - Cần chi tiết hồ sơ để đánh giá mức độ đáp ứng yêu cầu
+        - Muốn biết tài liệu nào còn thiếu hoặc bị từ chối
+    """
+    raw_id = (application_id or "").strip()
+    if not raw_id:
+        return json.dumps({"error": "application_id là bắt buộc."}, ensure_ascii=False)
+
+    try:
+        app_uuid = str(uuid.UUID(raw_id))
+    except ValueError:
+        return json.dumps(
+            {"error": "application_id phải là UUID hợp lệ.", "application_id": raw_id},
+            ensure_ascii=False,
+        )
+
+    user_id = _uid(config)
+
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+
+            # 1. Lay thong tin ho so apply + thong tin hoc bong
+            app_row = await conn.fetchrow(
+                """
+                SELECT
+                    ss.id,
+                    ss.user_id,
+                    ss.scholarship_id,
+                    ss.status,
+                    ss.application_date,
+                    ss.decision_date,
+                    ss.awarded_amount,
+                    ss.currency,
+                    ss.submitted_form_url,
+                    ss.note,
+                    ss.feedback,
+                    ss.reviewer_id,
+                    ss.created_at,
+                    ss.updated_at,
+                    -- Thong tin hoc bong
+                    s.name                      AS scholarship_name,
+                    s.description               AS scholarship_description,
+                    s.eligibility_criteria,
+                    s.provider,
+                    s.amount                    AS scholarship_amount,
+                    s.currency                  AS scholarship_currency,
+                    s.quantity,
+                    s.benefits,
+                    s.application_deadline,
+                    s.result_announcement_date,
+                    s.contact_email,
+                    s.contact_phone,
+                    s.official_website,
+                    s.is_active,
+                    sc.name                     AS category_name
+                FROM   student_scholarships ss
+                JOIN   scholarships s  ON s.id  = ss.scholarship_id
+                LEFT JOIN scholarship_categories sc ON sc.id = s.category_id
+                WHERE  ss.id      = $1
+                  AND  ss.user_id = $2
+                LIMIT  1
+                """,
+                app_uuid,
+                user_id,
+            )
+
+            if app_row is None:
+                return json.dumps(
+                    {
+                        "error": "Không tìm thấy hồ sơ hoặc bạn không có quyền truy cập.",
+                        "application_id": app_uuid,
+                        "user_id": user_id,
+                    },
+                    ensure_ascii=False,
+                )
+
+            scholarship_id = str(app_row["scholarship_id"])
+
+            # 2. Yeu cau cua hoc bong (scholarship_requirements)
+            req_rows = await conn.fetch(
+                """
+                SELECT id, title, description, is_required, sort_order
+                FROM   scholarship_requirements
+                WHERE  scholarship_id = $1
+                ORDER  BY sort_order ASC, created_at ASC
+                """,
+                scholarship_id,
+            )
+
+            # 3. Tai lieu yeu cau cua hoc bong (scholarship_documents)
+            req_doc_rows = await conn.fetch(
+                """
+                SELECT id, document_name, document_type, is_required,
+                       max_file_size_mb, sample_url
+                FROM   scholarship_documents
+                WHERE  scholarship_id = $1
+                ORDER  BY is_required DESC, created_at ASC
+                """,
+                scholarship_id,
+            )
+
+            # 4. Tai lieu sinh vien da nop (student_scholarship_documents)
+            #    JOIN voi scholarship_documents de lay ten tai lieu
+            submitted_doc_rows = await conn.fetch(
+                """
+                SELECT
+                    ssd.id,
+                    ssd.document_id,
+                    sd.document_name,
+                    sd.document_type,
+                    sd.is_required,
+                    ssd.file_url,
+                    ssd.upload_date,
+                    ssd.status,
+                    ssd.reviewer_note,
+                    ssd.created_at
+                FROM   student_scholarship_documents ssd
+                JOIN   scholarship_documents sd ON sd.id = ssd.document_id
+                WHERE  ssd.student_scholarship_id = $1
+                ORDER  BY ssd.created_at ASC
+                """,
+                app_uuid,
+            )
+
+            # 5. Lich su xet duyet (scholarship_reviews)
+            review_rows = await conn.fetch(
+                """
+                SELECT id, reviewer_id, stage, status, comment, reviewed_at, created_at
+                FROM   scholarship_reviews
+                WHERE  student_scholarship_id = $1
+                ORDER  BY created_at ASC
+                """,
+                app_uuid,
+            )
+
+        # ---------- Tong hop ket qua ----------
+        application_data = dict(app_row)
+        requirements = [dict(r) for r in req_rows]
+        required_docs = [dict(r) for r in req_doc_rows]
+        submitted_docs = [dict(r) for r in submitted_doc_rows]
+        reviews = [dict(r) for r in review_rows]
+
+        # Thong ke tai lieu da nop
+        submitted_doc_status: dict[str, int] = {}
+        for doc in submitted_docs:
+            s = doc.get("status", "unknown")
+            submitted_doc_status[s] = submitted_doc_status.get(s, 0) + 1
+
+        # Tai lieu bat buoc chua nop: so sanh required_docs vs submitted_docs
+        submitted_doc_ids = {str(d["document_id"]) for d in submitted_docs}
+        missing_required_docs = [
+            d for d in required_docs
+            if d.get("is_required") and str(d["id"]) not in submitted_doc_ids
+        ]
+
+        # Yeu cau hoc bong
+        required_req_count = sum(1 for r in requirements if r.get("is_required"))
+
+        payload = {
+            "application": _serialize(application_data),
+            "scholarship_requirements": {
+                "total": len(requirements),
+                "required_count": required_req_count,
+                "items": _serialize(requirements),
+            },
+            "scholarship_required_documents": {
+                "total": len(required_docs),
+                "required_count": sum(1 for d in required_docs if d.get("is_required")),
+                "items": _serialize(required_docs),
+            },
+            "submitted_documents": {
+                "total": len(submitted_docs),
+                "status_summary": submitted_doc_status,
+                "missing_required_docs": _serialize(missing_required_docs),
+                "items": _serialize(submitted_docs),
+            },
+            "review_history": {
+                "total_reviews": len(reviews),
+                "items": _serialize(reviews),
+            },
+            # Tong hop nhanh cho LLM du doan
+            "eligibility_summary": {
+                "eligibility_criteria": _serialize(application_data.get("eligibility_criteria")),
+                "application_status": _serialize(application_data.get("status")),
+                "feedback_from_reviewer": _serialize(application_data.get("feedback")),
+                "note": _serialize(application_data.get("note")),
+                "has_missing_required_docs": len(missing_required_docs) > 0,
+                "missing_required_doc_count": len(missing_required_docs),
+                "all_required_docs_approved": all(
+                    d.get("status") == "approved"
+                    for d in submitted_docs
+                    if d.get("is_required")
+                ) if submitted_docs else False,
+            },
+        }
+
+        return json.dumps(payload, ensure_ascii=False)
+
+    except Exception as exc:
+        logger.error(
+            "get_scholarship_application_detail_failed",
+            error=str(exc),
+            application_id=raw_id,
+            user_id=user_id,
+        )
+        return json.dumps(
+            {
+                "error": f"Lỗi lấy chi tiết hồ sơ học bổng: {str(exc)}",
+                "application_id": raw_id,
+            },
+            ensure_ascii=False,
+        )
