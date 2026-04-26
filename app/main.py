@@ -12,12 +12,7 @@ Thường bạn sẽ chạy app thông qua uvicorn trỏ tới `app.main:app`.
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-
-# Import các router/endpoint theo từng domain.
-# Ở đây `chat/classify/anomalies` nằm trong nhóm finance API v1.
-from app.api.finance import anomalies, chat, classify
-
-# Router cho career và elearning được export dưới tên `router` trong từng package.
+from app.api.finance import anomalies, chat, classify, insights
 from app.api.career import router as career_router
 from app.api.elearning import router as elearning_router
 
@@ -36,23 +31,15 @@ logger = structlog.get_logger()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Lifecycle hook cho FastAPI.
-
-    FastAPI sẽ gọi hàm này:
-    - Trước khi nhận request đầu tiên (startup)
-    - Và khi server chuẩn bị dừng (shutdown)
-
-    Quy ước của `asynccontextmanager`:
-    - Code trước `yield` chạy ở startup
-    - `yield` giao quyền cho app xử lý request
-    - Code sau `yield` chạy ở shutdown
-    """
-
-    # Startup: log môi trường đang chạy (dev/staging/prod...)
-    logger.info("student360-ai starting", env=settings.ENV)
-
-    # Ở đây không mở DB pool vì pool thường được lazy-init ở nơi khác.
-    # Nếu dự án cần init tài nguyên ở startup, đây là nơi phù hợp.
+    logger.info(
+        "student360-ai starting",
+        env=settings.ENV,
+        llm_provider_default=settings.LLM_PROVIDER,
+        gemini_model=settings.GEMINI_LLM_MODEL,
+        vertex_model=settings.VERTEX_LLM_MODEL,
+        ollama_model=settings.OLLAMA_MODEL,
+        ollama_base_url=settings.OLLAMA_BASE_URL,
+    )
     yield
 
     # Shutdown: đóng DB pool để giải phóng tài nguyên.
@@ -77,9 +64,7 @@ app = FastAPI(
 app.include_router(chat.router, prefix="/api/v1", tags=["chat"])
 app.include_router(classify.router, prefix="/api/v1", tags=["classify"])
 app.include_router(anomalies.router, prefix="/api/v1", tags=["anomalies"])
-
-# Hai router dưới đây tự có prefix riêng cấp module (career/elearning)
-# nên ở đây prefix đã bao gồm luôn phần path con.
+app.include_router(insights.router, prefix="/api/v1", tags=["insights"])
 app.include_router(career_router, prefix="/api/v1/career", tags=["career"])
 app.include_router(elearning_router, prefix="/api/v1/elearning", tags=["elearning"])
 
