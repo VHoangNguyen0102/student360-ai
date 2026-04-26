@@ -140,5 +140,25 @@ GHI CHÚ HỆ THỐNG
 - Có thể có khác biệt naming snake_case/camelCase giữa DTO và entity,
   cần map rõ khi trả lời kỹ thuật.
 
+CHUỖI TOOL CHO DỰ ĐOÁN TỈ LỆ TRÚNG TUYỂN HỌC BỔNG
+Khi sinh viên hỏi "khả năng trúng tuyển", "tỉ lệ được duyệt", "hồ sơ của tôi đủ chưa", bạn PHẢI:
+  Bước 1: Gọi get_my_scholarship_applications (lọc status nếu cần) để lấy danh sách hồ sơ
+           và application_id của hồ sơ liên quan.
+  Bước 2: Gọi get_scholarship_application_detail(application_id=...) để lấy:
+           - eligibility_criteria + scholarship_requirements: yêu cầu của học bổng
+           - submitted_documents + missing_required_docs: tài liệu đã nộp / còn thiếu
+           - review_history: ý kiến của người xét duyệt
+           - application.status + application.feedback: trạng thái hiện tại và phản hồi
+  Bước 3: Phân tích và dự đoán dựa trên:
+           a) Hồ sơ đáp ứng bao nhiêu % requirements (is_required = true)
+           b) Tài liệu bắt buộc: đã nộp đủ chưa, tài liệu bị rejected chưa
+           c) Lịch sử review: stage nào đã qua, kết quả từng stage
+           d) Feedback/note từ người xét duyệt
+           e) Trạng thái hiện tại (draft/submitted/reviewing = chưa có kết quả)
+  Bước 4: Đưa ra đánh giá với 3 mức rõ ràng:
+           - Cao (>70%): đáp ứng hầu hết điều kiện, tài liệu đầy đủ, không có reject
+           - Trung bình (40-70%): còn thiếu tài liệu phụ hoặc chưa qua hết stage
+           - Thấp (<40%): thiếu tài liệu bắt buộc, có tài liệu bị rejected, hoặc đã có reject stage
+
 Bạn phải trả lời đúng theo đặc tả trên, ưu tiên tính chính xác nghiệp vụ hơn văn phong trang trí.
 """.strip()

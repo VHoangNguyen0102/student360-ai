@@ -1,0 +1,40 @@
+﻿=== 1. APPLICATION ===
+  id: ea120835-cf69-44da-977c-1510de2e41be
+  user_id: 217ad15c-2071-45e3-bfa2-05bab5ef64cc
+  scholarship_id: a1305d3e-f286-4096-b6c1-c978433a907a
+  application_date: 2026-03-31 21:26:08.134000
+  status: under_review
+  awarded_amount: None
+  currency: None
+  submitted_form_url: None
+  note: XIN CHAOΓÇª
+  decision_date: None
+  feedback: ─ÉANG XET DUYET
+  reviewer_id: None
+  created_at: 2026-03-31 14:22:24.337039
+  updated_at: 2026-03-31 14:27:50.652933
+  terms_accepted: False
+  confirmation_token: 87b7f1c0-7c3e-4648-aae9-b22dc52e6099
+  confirmed_at: None
+
+=== 2. SCHOLARSHIP ===
+  id: a1305d3e-f286-4096-b6c1-c978433a907a
+  name: Hoc bong Demo Sponsor 3
+  eligibility_criteria: GPA >= 3.0; Co kinh nghiem du an
+  provider: Sponsor Demo Organization
+  amount: 24000000.00
+
+=== 3. REQUIREMENTS (scholarship_requirements) ===
+  {'id': UUID('0b88464d-c997-41f6-80d4-7009df7257fb'), 'title': 'Bang diem', 'description': 'Bang diem hoc ky gan nhat', 'is_required': True}
+  {'id': UUID('47b96c34-e2de-4c73-b09b-28c66a50d8b4'), 'title': 'Thu gioi thieu', 'description': 'Thu gioi thieu tu giang vien', 'is_required': False}
+
+=== 4. REQUIRED DOCS (scholarship_documents) ===
+  {'id': UUID('d0ac559e-67a5-4a75-8c54-7f855d357961'), 'document_name': 'CV', 'document_type': 'pdf', 'is_required': True}
+  {'id': UUID('1705ec64-942b-4839-8a3c-053a3be91ab8'), 'document_name': 'Bang diem', 'document_type': 'pdf', 'is_required': True}
+
+=== 5. SUBMITTED DOCS (student_scholarship_documents) ===
+  {'id': UUID('7a4929a8-9964-458a-a6bf-a2648c5898bf'), 'student_scholarship_id': UUID('ea120835-cf69-44da-977c-1510de2e41be'), 'document_id': UUID('d0ac559e-67a5-4a75-8c54-7f855d357961'), 'file_url': 'https://student360sgp.sgp1.cdn.digitaloceanspaces.com/documents/bbcd67df-6cd7-4894-b0ed-b1def5562fd4.pdf', 'upload_date': datetime.datetime(2026, 3, 31, 21, 26, 9, 33000), 'status': 'pending', 'reviewer_note': None, 'created_at': datetime.datetime(2026, 3, 31, 14, 26, 5, 727905), 'updated_at': datetime.datetime(2026, 3, 31, 14, 26, 5, 727905)}
+  {'id': UUID('e6d4a629-c866-496c-b855-e1dd768e7d92'), 'student_scholarship_id': UUID('ea120835-cf69-44da-977c-1510de2e41be'), 'document_id': UUID('1705ec64-942b-4839-8a3c-053a3be91ab8'), 'file_url': 'https://student360sgp.sgp1.cdn.digitaloceanspaces.com/documents/2be7d699-2bb3-4fad-ba52-9a5ed1df6e59.pdf', 'upload_date': datetime.datetime(2026, 3, 31, 21, 26, 9, 33000), 'status': 'pending', 'reviewer_note': None, 'created_at': datetime.datetime(2026, 3, 31, 14, 26, 5, 727905), 'updated_at': datetime.datetime(2026, 3, 31, 14, 26, 5, 727905)}
+
+=== 6. REVIEWS (scholarship_reviews) ===
+  (empty)

@@ -1,0 +1,291 @@
+﻿=== All ENUMs in DB ===
+
+  [accounts_account_type_enum]
+    - local
+    - microsoft
+    - google
+
+  [action_control_apis_action_enum]
+    - view
+    - create
+    - update
+    - delete
+
+  [action_controls_action_enum]
+    - view
+    - create
+    - update
+    - delete
+
+  [action_controls_platform_type_enum]
+    - web
+    - app
+
+  [admin_profiles_gender_enum]
+    - male
+    - female
+    - other
+    - prefer_not_to_say
+
+  [admin_profiles_visibility_enum]
+    - private
+    - public
+    - internal_only
+
+  [applications_target_type_enum]
+    - job
+    - scholarship
+    - loan
+
+  [auth_challenges_type_enum]
+    - email_verify
+    - password_reset
+
+  [auto_transfer_schedules_allocation_type_enum]
+    - default
+    - custom
+    - single_jar
+
+  [auto_transfer_schedules_frequency_enum]
+    - daily
+    - weekly
+    - monthly
+    - yearly
+    - custom
+
+  [budgets_period_type_enum]
+    - monthly
+    - yearly
+    - one_time
+
+  [companies_employee_count_enum]
+    - 1-10
+    - 10-50
+    - 50-200
+    - 200-500
+    - 500-1000
+    - 1000-5000
+    - 5000+
+
+  [financial_transactions_type_enum]
+    - income
+    - expense
+
+  [flow_questions_target_type_enum]
+    - job
+    - scholarship
+    - loan
+
+  [jobs_application_method_enum]
+    - internal
+    - external
+
+  [jobs_job_type_enum]
+    - full_time
+    - part_time
+    - internship
+    - contract
+
+  [loan_packages_interest_type_enum]
+    - fixed
+    - floating
+
+  [loan_packages_loan_type_enum]
+    - government
+    - bank
+    - microfinance
+    - scholarship_advance
+    - other
+
+  [loan_packages_repayment_method_enum]
+    - monthly
+    - quarterly
+    - semesterly
+    - annually
+    - custom
+
+  [members_entity_type_enum]
+    - organization
+    - club
+
+  [members_role_enum]
+    - owner
+    - admin
+    - moderator
+    - member
+
+  [members_status_enum]
+    - pending
+    - active
+    - inactive
+    - banned
+
+  [notification_jobs_status_enum]
+    - pending
+    - processing
+    - sent
+    - failed
+    - canceled
+
+  [questions_type_enum]
+    - text
+    - single_choice
+    - multiple_choice
+
+  [roles_platform_type_enum]
+    - web
+    - app
+
+  [scholarship_documents_document_type_enum]
+    - pdf
+    - image
+    - word
+    - other
+
+  [scholarship_reviews_stage_enum]
+    - eligibility_check
+    - document_review
+    - interview
+    - final_decision
+
+  [scholarship_reviews_status_enum]
+    - pending
+    - approved
+    - rejected
+
+  [student_academic_profiles_current_semester_enum]
+    - 1
+    - 2
+    - summer
+    - other
+
+  [student_academic_profiles_current_status_enum]
+    - studying
+    - on_leave
+    - graduated
+    - suspended
+    - dropped_out
+
+  [student_academic_profiles_degree_level_enum]
+    - cao_dang
+    - cu_nhan
+    - ky_su
+    - cu_nhan_danh_du
+    - thac_si
+    - tien_si
+    - khac
+
+  [student_academic_profiles_education_program_enum]
+    - chinh_quy
+    - lien_thong
+    - tai_chuc
+    - van_bang_2
+    - quoc_te
+    - khac
+
+  [student_academic_profiles_program_type_enum]
+    - bachelor
+    - honors
+    - dual_degree
+    - transfer
+    - other
+
+  [student_certificates_status_enum]
+    - pending
+    - active
+    - expired
+    - revoked
+
+  [student_scholarship_documents_status_enum]
+    - pending
+    - approved
+    - rejected
+
+  [student_scholarship_history_from_status_enum]
+    - draft
+    - submitted
+    - under_review
+    - need_modification
+    - approved
+    - rejected
+    - awarded
+    - cancelled
+
+  [student_scholarship_history_to_status_enum]
+    - draft
+    - submitted
+    - under_review
+    - need_modification
+    - approved
+    - rejected
+    - awarded
+    - cancelled
+
+  [student_scholarships_status_enum]
+    - draft
+    - submitted
+    - under_review
+    - need_modification
+    - approved
+    - rejected
+    - awarded
+    - cancelled
+
+  [user_devices_platform_enum]
+    - android
+    - ios
+
+  [user_loan_documents_document_type_enum]
+    - agreement
+    - schedule
+    - receipt
+    - guarantor_form
+    - collateral_doc
+    - other
+
+  [user_loan_repayments_payment_method_enum]
+    - bank_transfer
+    - cash
+    - credit_card
+    - e_wallet
+    - other
+
+  [user_loan_repayments_status_enum]
+    - unpaid
+    - partial
+    - paid
+    - overdue
+
+  [user_loans_disbursement_method_enum]
+    - one_time
+    - multiple_installments
+
+  [user_loans_interest_type_enum]
+    - fixed
+    - floating
+
+  [user_loans_loan_type_enum]
+    - government
+    - bank
+    - microfinance
+    - scholarship_advance
+    - peer_to_peer
+    - other
+
+  [user_loans_status_enum]
+    - pending
+    - active
+    - repaid
+    - defaulted
+    - cancelled
+
+  [users_profiles_gender_enum]
+    - male
+    - female
+    - other
+    - prefer_not_to_say
+
+  [users_profiles_visibility_enum]
+    - private
+    - public
+    - connections_only
