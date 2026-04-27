@@ -12,11 +12,16 @@ from difflib import SequenceMatcher
 from typing import Any
 
 import structlog
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 
 from app.core.database import get_pool
 
 logger = structlog.get_logger()
+
+
+def _uid(config: RunnableConfig) -> str:
+	return config["configurable"]["user_id"]
 
 
 def _serialize(value: Any) -> Any:
@@ -441,3 +446,452 @@ async def get_scholarship_details(scholarship_id: str) -> str:
 			},
 			ensure_ascii=False,
 		)
+
+def _build_profile_text(profile: dict[str, Any]) -> str:
+    """Flatten profile fields to a single text blob for fuzzy matching."""
+    fields = [
+        "major",
+        "university",
+        "school",
+        "faculty",
+        "program",
+        "skills",
+        "interests",
+        "keywords",
+        "career_goal",
+        "location",
+        "country",
+    ]
+    parts: list[str] = []
+    for field in fields:
+        value = profile.get(field)
+        if isinstance(value, str) and value.strip():
+            parts.append(value)
+        elif isinstance(value, (list, tuple)):
+            parts.extend(str(item) for item in value if str(item).strip())
+    return " ".join(parts)
+
+
+def _score_profile_match(profile: dict[str, Any], row: dict[str, Any]) -> tuple[float, list[str]]:
+    """Score scholarship against profile using token overlap and fuzzy similarity."""
+    profile_text = _build_profile_text(profile)
+    profile_tokens = set(_tokenize(profile_text))
+
+    scholarship_text = " ".join(
+        str(row.get(field) or "")
+        for field in [
+            "name",
+            "description",
+            "eligibility_criteria",
+            "benefits",
+            "provider",
+            "category_name",
+        ]
+    )
+    scholarship_tokens = set(_tokenize(scholarship_text))
+
+    if not profile_tokens or not scholarship_tokens:
+        return 0.0, []
+
+    token_score = _jaccard(profile_tokens, scholarship_tokens)
+    bigram_score = _jaccard(_char_ngrams(profile_text, n=2), _char_ngrams(scholarship_text, n=2))
+    name_score = SequenceMatcher(
+        None,
+        _normalize_text(profile_text),
+        _normalize_text(str(row.get("name") or "")),
+    ).ratio()
+
+    score = 0.5 * token_score + 0.3 * bigram_score + 0.2 * name_score
+    matched_terms = sorted(profile_tokens & scholarship_tokens)[:15]
+    return round(max(0.0, min(score, 1.0)), 6), matched_terms
+
+
+@tool
+async def get_my_full_profile(config: RunnableConfig) -> str:
+	"""
+	Lấy toàn bộ thông tin hồ sơ của sinh viên hiện tại (cá nhân + học vấn + kỹ năng + sở thích
+	+ học bổng đã đăng ký + việc làm đã lưu + CLB tham gia + chứng chỉ).
+
+	Trả về:
+		JSON string với các nhóm dữ liệu chính để dùng cho matching học bổng.
+	"""
+	user_id = _uid(config)
+
+	try:
+		pool = await get_pool()
+		async with pool.acquire() as conn:
+			user_row = await conn.fetchrow(
+				"""
+				SELECT u.id AS user_id,
+					   u.account_id,
+					   a.email AS account_email,
+					   up.full_name,
+					   up.gender,
+					   up.date_of_birth,
+					   up.phone_number,
+					   up.national_id,
+					   up.email AS profile_email,
+					   up.address,
+					   up.city,
+					   up.country,
+					   up.province_id,
+					   up.avatar_url,
+					   up.cover_photo_url,
+					   up.headline,
+					   up.summary,
+					   up.career_goal,
+					   up.interests AS interest_ids,
+					   up.skill AS skill_ids,
+					   up.linkedin_url,
+					   up.portfolio_url,
+					   up.resume_url,
+					   up.personal_website,
+					   up.visibility,
+					   up.created_at AS profile_created_at,
+					   up.updated_at AS profile_updated_at
+				FROM users u
+				LEFT JOIN accounts a ON a.account_id = u.account_id
+				LEFT JOIN users_profiles up ON up.user_id = u.id
+				WHERE u.id = $1
+				LIMIT 1
+				""",
+				user_id,
+			)
+
+			if not user_row:
+				return json.dumps(
+					{"error": "Không tìm thấy sinh viên.", "user_id": user_id},
+					ensure_ascii=False,
+				)
+
+			account_id = user_row.get("account_id")
+			skill_ids = user_row.get("skill_ids") or []
+			interest_ids = user_row.get("interest_ids") or []
+
+			academic_rows = await conn.fetch(
+				"""
+				SELECT id,
+					   university,
+					   student_code,
+					   education_program,
+					   degree_level,
+					   faculty,
+					   major,
+					   minor,
+					   program_type,
+					   gpa,
+					   enrollment_year,
+					   expected_graduation_year,
+					   current_status,
+					   current_year,
+					   current_semester,
+					   created_at,
+					   updated_at
+				FROM student_academic_profiles
+				WHERE user_id = $1
+				ORDER BY updated_at DESC NULLS LAST
+				""",
+				user_id,
+			)
+
+			skills = []
+			if skill_ids:
+				skills = await conn.fetch(
+					"""
+					SELECT id, name, description, created_at, updated_at
+					FROM skills
+					WHERE id = ANY($1::uuid[])
+					""",
+					skill_ids,
+				)
+
+			interests = []
+			if interest_ids:
+				interests = await conn.fetch(
+					"""
+					SELECT id, name, description, created_at, updated_at
+					FROM profile_interests
+					WHERE id = ANY($1::uuid[])
+					""",
+					interest_ids,
+				)
+
+			scholarship_rows = await conn.fetch(
+				"""
+				SELECT ss.id,
+					   ss.scholarship_id,
+					   ss.status,
+					   ss.application_date,
+					   ss.decision_date,
+					   ss.awarded_amount,
+					   ss.currency,
+					   ss.submitted_form_url,
+					   ss.note,
+					   ss.feedback,
+					   ss.created_at,
+					   ss.updated_at,
+					   s.name AS scholarship_name,
+					   s.provider,
+					   s.amount AS scholarship_amount,
+					   s.currency AS scholarship_currency,
+					   s.application_deadline,
+					   s.result_announcement_date
+				FROM student_scholarships ss
+				JOIN scholarships s ON s.id = ss.scholarship_id
+				WHERE ss.user_id = $1
+				ORDER BY ss.created_at DESC
+				""",
+				user_id,
+			)
+
+			saved_job_rows = await conn.fetch(
+				"""
+				SELECT usj.id,
+					   usj.job_id,
+					   usj.note,
+					   usj.saved_at,
+					   j.title,
+					   j.company_id,
+					   j.job_type,
+					   j.salary_min,
+					   j.salary_max,
+					   j.currency_id,
+					   j.application_method,
+					   j.deadline,
+					   j.is_active
+				FROM user_saved_jobs usj
+				JOIN jobs j ON j.id = usj.job_id
+				WHERE usj.user_id = $1
+				ORDER BY usj.saved_at DESC
+				""",
+				user_id,
+			)
+
+			club_rows = []
+			if account_id:
+				club_rows = await conn.fetch(
+					"""
+					SELECT m.id AS membership_id,
+						   m.role,
+						   m.status,
+						   m.joined_at,
+						   m.left_at,
+						   c.id AS club_id,
+						   c.name,
+						   c.description,
+						   c.tags,
+						   c.members_count,
+						   c.events_count,
+						   c.posts_count,
+						   c.banner_url,
+						   c.logo_url,
+						   c.contact_email,
+						   c.website_url,
+						   c.meeting_schedule,
+						   c.meeting_location,
+						   c.status AS club_status
+					FROM members m
+					JOIN clubs c ON c.id = m.entity_id
+					WHERE m.account_id = $1
+					  AND m.entity_type = 'club'
+					ORDER BY m.joined_at DESC NULLS LAST
+					""",
+					account_id,
+				)
+
+			certificate_rows = await conn.fetch(
+				"""
+				SELECT sc.id,
+					   sc.certificate_id,
+					   sc.certificate_number,
+					   sc.issued_date,
+					   sc.expiry_date,
+					   sc.certificate_file_url,
+					   sc.verification_code,
+					   sc.verification_url,
+					   sc.final_score,
+					   sc.completion_date,
+					   sc.status,
+					   sc.revocation_reason,
+					   sc.revoked_at,
+					   sc.created_at,
+					   sc.updated_at,
+					   c.name AS certificate_name,
+					   c.description AS certificate_description,
+					   c.issuing_organization,
+					   c.certificate_type
+				FROM student_certificates sc
+				JOIN certificates c ON c.id = sc.certificate_id
+				WHERE sc.user_id = $1
+				ORDER BY sc.created_at DESC
+				""",
+				user_id,
+			)
+
+		payload = {
+			"user": _serialize(dict(user_row)),
+			"academics": _serialize([dict(r) for r in academic_rows]),
+			"skills": _serialize([dict(r) for r in skills]),
+			"interests": _serialize([dict(r) for r in interests]),
+			"scholarships": _serialize([dict(r) for r in scholarship_rows]),
+			"saved_jobs": _serialize([dict(r) for r in saved_job_rows]),
+			"clubs": _serialize([dict(r) for r in club_rows]),
+			"certificates": _serialize([dict(r) for r in certificate_rows]),
+			"counts": {
+				"academics": len(academic_rows),
+				"skills": len(skills),
+				"interests": len(interests),
+				"scholarships": len(scholarship_rows),
+				"saved_jobs": len(saved_job_rows),
+				"clubs": len(club_rows),
+				"certificates": len(certificate_rows),
+			},
+		}
+
+		return json.dumps(payload, ensure_ascii=False)
+	except Exception as exc:  # pragma: no cover - defensive fallback for tool runtime
+		logger.exception("get_my_full_profile_failed", error=str(exc), user_id=user_id)
+		return json.dumps(
+			{"error": f"Lỗi lấy hồ sơ sinh viên: {str(exc)}"},
+			ensure_ascii=False,
+		)
+
+@tool
+async def match_scholarships_for_profile(
+    profile_json: str,
+    max_results: int = 10,
+    active_only: bool = True,
+    open_only: bool = False,
+) -> str:
+    """
+    Rank scholarships by compatibility with a student profile.
+
+    Args:
+        profile_json: JSON string with fields like major, university, skills, interests.
+        max_results: Number of candidates to return (1-20).
+        active_only: If true, only search scholarships with is_active = true.
+        open_only: If true, only include scholarships still open for application.
+
+    Returns:
+        JSON string with best_match and ranked candidates.
+    """
+    if not (profile_json or "").strip():
+        return json.dumps(
+            {
+                "error": "profile_json is required.",
+                "hint": "Ví dụ: {'major':'IT','university':'FPT','skills':['python','ai']}"
+            },
+            ensure_ascii=False,
+        )
+
+    try:
+        profile = json.loads(profile_json)
+    except json.JSONDecodeError:
+        return json.dumps(
+            {
+                "error": "profile_json must be valid JSON.",
+            },
+            ensure_ascii=False,
+        )
+
+    if not isinstance(profile, dict):
+        return json.dumps(
+            {
+                "error": "profile_json must be a JSON object.",
+            },
+            ensure_ascii=False,
+        )
+
+    safe_limit = max(1, min(int(max_results), 20))
+    profile_text = _build_profile_text(profile)
+    if not profile_text:
+        return json.dumps(
+            {
+                "error": "Profile is missing searchable fields.",
+                "required_fields": ["major", "university", "skills", "interests", "keywords"],
+            },
+            ensure_ascii=False,
+        )
+
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT s.id,
+                       s.name,
+                       s.description,
+                       s.eligibility_criteria,
+                       s.benefits,
+                       s.provider,
+                       s.is_active,
+                       s.application_deadline,
+                       s.result_announcement_date,
+                       s.updated_at,
+                       sc.name AS category_name
+                FROM scholarships s
+                LEFT JOIN scholarship_categories sc ON sc.id = s.category_id
+                WHERE ($1::boolean = false OR s.is_active = true)
+                ORDER BY s.updated_at DESC NULLS LAST
+                LIMIT 300
+                """,
+                active_only,
+            )
+
+        ranked: list[dict[str, Any]] = []
+        now = datetime.utcnow()
+        for row in rows:
+            row_dict = dict(row)
+            deadline = row_dict.get("application_deadline")
+            is_open = bool(row_dict.get("is_active") and (deadline is None or deadline >= now))
+            if open_only and not is_open:
+                continue
+
+            score, matched_terms = _score_profile_match(profile, row_dict)
+            ranked.append(
+                {
+                    "id": row_dict.get("id"),
+                    "name": row_dict.get("name"),
+                    "provider": row_dict.get("provider"),
+                    "category": row_dict.get("category_name"),
+                    "is_active": row_dict.get("is_active"),
+                    "application_deadline": row_dict.get("application_deadline"),
+                    "result_announcement_date": row_dict.get("result_announcement_date"),
+                    "is_open_for_application": is_open,
+                    "score": score,
+                    "matched_terms": matched_terms,
+                }
+            )
+
+        ranked.sort(key=lambda item: (item["score"], bool(item.get("is_open_for_application"))), reverse=True)
+        top = ranked[:safe_limit]
+        best = top[0] if top else None
+        confidence = "high" if best and best["score"] >= 0.7 else "medium" if best and best["score"] >= 0.5 else "low"
+
+        payload = {
+            "profile_summary": profile,
+            "search_mode": {
+                "accent_insensitive": True,
+                "active_only": active_only,
+                "open_only": open_only,
+            },
+            "best_match": _serialize(best) if best else None,
+            "best_match_id": _serialize(best.get("id")) if best else None,
+            "confidence": confidence,
+            "candidates": _serialize(top),
+        }
+
+        if best and best["score"] < 0.5:
+            payload["warning"] = (
+                "Kết quả khớp thấp. Nên kiểm tra lại profile hoặc xem danh sách candidates."
+            )
+
+        return json.dumps(payload, ensure_ascii=False)
+    except Exception as exc:  # pragma: no cover - defensive fallback for tool runtime
+        logger.exception("match_scholarships_for_profile_failed", error=str(exc))
+        return json.dumps(
+            {
+                "error": f"Lỗi tìm học bổng phù hợp: {str(exc)}",
+            },
+            ensure_ascii=False,
+        )

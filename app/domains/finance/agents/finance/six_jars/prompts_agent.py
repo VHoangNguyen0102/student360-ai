@@ -34,3 +34,18 @@ LIMIT:
 - Chỉ trả lời về tài chính cá nhân, 6 lọ, chi tiêu, tiết kiệm.
 - Từ chối nhẹ nhàng các câu hỏi ngoài phạm vi tài chính.
 """
+
+
+def get_personal_system_prompt() -> str:
+    """Personal finance prompt variant (alias of base six-jars prompt)."""
+    return get_finance_system_prompt()
+
+
+def get_knowledge_system_prompt() -> str:
+    """Knowledge prompt variant (alias of base six-jars prompt)."""
+    return get_finance_system_prompt()
+
+
+def get_hybrid_system_prompt() -> str:
+    """Hybrid prompt variant (alias of base six-jars prompt)."""
+    return get_finance_system_prompt()

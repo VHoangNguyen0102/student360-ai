@@ -13,6 +13,7 @@ from langchain_core.runnables import RunnableConfig
 
 from app.domains.finance.agents.finance.composition import get_finance_tools
 from app.domains.finance.agents.finance.react_loop import run_tool_calling_turn
+from app.domains.finance.agents.finance.scholarships.prompts import get_scholarship_system_prompt
 from app.domains.finance.agents.finance.six_jars.intent_classifier import classify_intent
 from app.domains.finance.agents.finance.six_jars.policy_gate import get_tools_for_intent
 from app.domains.finance.agents.finance.six_jars.prompts_agent import (
@@ -38,6 +39,7 @@ _INTENT_TO_MODE: dict[str, str] = {
 
 def _select_system_prompt(intent: str) -> str:
     """Return the appropriate system prompt based on classified intent."""
+    return get_scholarship_system_prompt()
     if intent == "knowledge_6jars":
         return get_knowledge_system_prompt()
     if intent == "personal_finance":
