@@ -1,0 +1,53 @@
+{
+  "projectName": "student360-ai",
+  "ignore": [
+    "venv/**",
+    ".venv/**",
+    "__pycache__/**",
+    "*.pyc",
+    ".pytest_cache/**",
+    "htmlcov/**",
+    ".coverage",
+    "dist/**",
+    "build/**",
+    "*.egg-info/**",
+    ".mypy_cache/**",
+    ".ruff_cache/**",
+    "node_modules/**",
+    ".git/**"
+  ],
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(pytest:*)",
+      "Bash(pip:*)",
+      "Bash(uvicorn:*)",
+      "Bash(make:*)",
+      "Bash(grep:*)",
+      "Bash(find:*)",
+      "Bash(cat:*)",
+      "Bash(ls:*)",
+      "Bash(git log:*)",
+      "Bash(git diff:*)",
+      "Bash(git status:*)"
+    ],
+    "deny": [
+      "Bash(rm -rf:*)",
+      "Bash(git push --force:*)",
+      "Bash(git reset --hard:*)",
+      "Bash(docker system prune:*)"
+    ]
+  },
+  "defaultBehavior": {
+    "preferReadBeforeEdit": true,
+    "explainChanges": true,
+    "suggestTestsForNewCode": true
+  },
+  "context": {
+    "alwaysInclude": [
+      ".claude/CLAUDE.md",
+      "app/config.py",
+      "pyproject.toml"
+    ]
+  }
+}
