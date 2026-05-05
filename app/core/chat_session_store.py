@@ -34,6 +34,7 @@ async def run_finance_turn(
     system_prompt: str,
     runner: Callable[[list[BaseMessage], RunnableConfig], Awaitable[None]],
     tool_config: RunnableConfig,
+    history: list[BaseMessage] | None = None,
 ) -> list[BaseMessage]:
     """
     Append `incoming` to the thread transcript, ensure a system message exists,
@@ -44,7 +45,10 @@ async def run_finance_turn(
     async with lock:
         hist = _sessions.setdefault(thread_id, [])
         if not hist:
-            hist.append(SystemMessage(content=system_prompt))
+            if history:
+                hist.extend(history)
+            else:
+                hist.append(SystemMessage(content=system_prompt))
         idx = len(hist)
         for m in incoming:
             hist.append(m)

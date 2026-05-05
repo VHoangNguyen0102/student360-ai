@@ -29,6 +29,9 @@ dependencies = [
 
     # Logging
     "structlog>=24.0.0",
+
+    # SSE streaming
+    "sse-starlette>=2.1.0",
 ]
 
 [project.optional-dependencies]

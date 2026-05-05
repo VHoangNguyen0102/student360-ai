@@ -11,9 +11,16 @@ import uuid
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException
-from langchain_core.messages import HumanMessage
+from sse_starlette.sse import EventSourceResponse, ServerSentEvent
+from langchain_core.messages import (
+    AIMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 
 from app.domains.finance.agents.finance.agent import get_finance_agent
+from app.core.llm.runtime_model import llm_model_override
 from app.core.llm.runtime_provider import llm_provider_override
 from app.config import settings
 from app.domains.finance.models.chat import ChatRequest, ChatResponse, ChatUsage
@@ -23,7 +30,44 @@ logger = structlog.get_logger()
 router = APIRouter()
 
 
-def _resolve_model_name(provider: str) -> str:
+def _build_provider_plan(provider_override: str | None) -> list[str]:
+    """Build ordered provider attempts, prioritizing requested/default provider first."""
+    first = provider_override or settings.LLM_PROVIDER
+    if not settings.AI_PROVIDER_FALLBACK_ENABLED:
+        return [first] if first in {"vertexai", "gemini", "ollama"} else [settings.LLM_PROVIDER]
+
+    candidates = [first, "vertexai", "gemini", "ollama"]
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for p in candidates:
+        if p not in {"vertexai", "gemini", "ollama"}:
+            continue
+        if p in seen:
+            continue
+        seen.add(p)
+        ordered.append(p)
+    return ordered
+
+
+def _is_retryable_provider_error(error_text: str) -> bool:
+    lowered = (error_text or "").lower()
+    signals = (
+        "resource_exhausted",
+        "429",
+        "quota",
+        "all connection attempts failed",
+        "server disconnected without sending a response",
+        "name or service not known",
+        "connection refused",
+        "timed out",
+        "temporary failure in name resolution",
+    )
+    return any(signal in lowered for signal in signals)
+
+
+def _resolve_model_name(provider: str, model_override: str | None = None) -> str:
+    if model_override and model_override.strip():
+        return model_override.strip()
     if provider == "ollama":
         return settings.OLLAMA_MODEL
     if provider == "vertexai":
@@ -175,34 +219,81 @@ async def chat(
 
     start = time.monotonic()
     provider_override = req.llm_provider.value if req.llm_provider else None
-    provider_used = provider_override or settings.LLM_PROVIDER
-    model_used = _resolve_model_name(provider_used)
+    model_override = req.llm_model
+    provider_plan = _build_provider_plan(provider_override)
+    provider_used = provider_plan[0]
+    model_used = _resolve_model_name(provider_used, model_override)
+
+    # Convert request history to LangChain messages
+    history_messages = []
+    if req.history:
+        for m in req.history:
+            if m.role == "system":
+                history_messages.append(SystemMessage(content=m.content))
+            elif m.role == "user":
+                history_messages.append(HumanMessage(content=m.content))
+            elif m.role == "assistant":
+                history_messages.append(AIMessage(content=m.content, tool_calls=m.tool_calls or []))
+            elif m.role == "tool":
+                # Note: tid might be missing in simplified DTO, fallback to name or generic
+                history_messages.append(ToolMessage(content=m.content, tool_call_id=str(uuid.uuid4())))
+
     logger.info(
         "chat_request_started",
         user_id=req.user_id,
         session_id=session_id,
         provider_used=provider_used,
         model_used=model_used,
+        provider_plan=provider_plan,
         ollama_base_url=settings.OLLAMA_BASE_URL if provider_used == "ollama" else None,
         message_len=len(req.message or ""),
+        history_len=len(history_messages),
     )
-    try:
-        with llm_provider_override(provider_override):
-            result = await agent.ainvoke(
-                {
-                    "messages": [HumanMessage(content=req.message)],
-                },
-                config=config,
+    result: dict | None = None
+    last_error: Exception | None = None
+    for idx, provider in enumerate(provider_plan):
+        provider_used = provider
+        model_used = _resolve_model_name(provider_used, model_override)
+        try:
+            with llm_provider_override(provider_used), llm_model_override(model_override):
+                result = await agent.ainvoke(
+                    {
+                        "messages": [HumanMessage(content=req.message)],
+                    },
+                    config=config,
+                    history=history_messages,
+                )
+            break
+        except Exception as exc:
+            last_error = exc
+            err = str(exc)
+            should_retry = idx < len(provider_plan) - 1 and _is_retryable_provider_error(err)
+            logger.error(
+                "agent_invoke_failed",
+                error=err,
+                user_id=req.user_id,
+                provider=provider_used,
+                attempt=idx + 1,
+                will_retry=should_retry,
             )
-    except Exception as exc:
-        logger.error("agent_invoke_failed", error=str(exc), user_id=req.user_id)
-        err = str(exc)
+            if should_retry:
+                continue
+
+            if "RESOURCE_EXHAUSTED" in err or "429" in err:
+                raise HTTPException(
+                    status_code=429,
+                    detail="AI provider quota exhausted (RESOURCE_EXHAUSTED). Please retry later.",
+                ) from exc
+            raise HTTPException(status_code=500, detail="AI agent error") from exc
+
+    if result is None:
+        err = str(last_error) if last_error else "Unknown AI error"
         if "RESOURCE_EXHAUSTED" in err or "429" in err:
             raise HTTPException(
                 status_code=429,
-                detail="Gemini API quota exhausted (RESOURCE_EXHAUSTED). Please retry later.",
-            ) from exc
-        raise HTTPException(status_code=500, detail="AI agent error") from exc
+                detail="AI provider quota exhausted (RESOURCE_EXHAUSTED). Please retry later.",
+            )
+        raise HTTPException(status_code=500, detail="AI agent error")
 
     latency_ms = int((time.monotonic() - start) * 1000)
 
@@ -291,4 +382,106 @@ async def chat(
         intent=intent,
         answer_mode=answer_mode,
         provider_used=provider_used,
+        model_used=model_used,
     )
+
+
+@router.post("/chat/stream")
+async def chat_stream(
+    req: ChatRequest,
+    _: str = Depends(verify_service_token),
+) -> EventSourceResponse:
+    """Streaming variant of /chat — emits SSE events as the agent processes the request.
+
+    SSE event types:
+      status  — tool-calling phase progress ("Đang tra cứu số dư ví...")
+      token   — individual text tokens of the final reply
+      done    — metadata JSON (sessionId, intent, answerMode, providerUsed, modelUsed)
+      error   — error detail string
+    """
+    session_id = req.session_id or str(uuid.uuid4())
+    agent = get_finance_agent()
+
+    # Streaming is only supported on vertexai; override to vertexai if needed.
+    provider_used = "vertexai"
+    model_used = _resolve_model_name(provider_used, req.llm_model)
+
+    config = {
+        "configurable": {
+            "thread_id": session_id,
+            "user_id": req.user_id,
+        }
+    }
+
+    history_messages = []
+    if req.history:
+        for m in req.history:
+            if m.role == "system":
+                history_messages.append(SystemMessage(content=m.content))
+            elif m.role == "user":
+                history_messages.append(HumanMessage(content=m.content))
+            elif m.role == "assistant":
+                history_messages.append(AIMessage(content=m.content, tool_calls=m.tool_calls or []))
+            elif m.role == "tool":
+                history_messages.append(ToolMessage(content=m.content, tool_call_id=str(uuid.uuid4())))
+
+    logger.info(
+        "chat_stream_started",
+        user_id=req.user_id,
+        session_id=session_id,
+        provider_used=provider_used,
+        model_used=model_used,
+    )
+
+    async def event_generator():
+        try:
+            with llm_provider_override(provider_used), llm_model_override(req.llm_model):
+                async for event_type, data in agent.astream(
+                    {"messages": [HumanMessage(content=req.message)]},
+                    config=config,
+                    history=history_messages,
+                ):
+                    if event_type == "status":
+                        yield ServerSentEvent(
+                            event="status",
+                            data=json.dumps({"message": data}, ensure_ascii=False),
+                        )
+                    elif event_type == "token":
+                        yield ServerSentEvent(
+                            event="token",
+                            data=json.dumps({"text": data}, ensure_ascii=False),
+                        )
+
+            logger.info(
+                "chat_stream_completed",
+                user_id=req.user_id,
+                session_id=session_id,
+            )
+            yield ServerSentEvent(
+                event="done",
+                data=json.dumps(
+                    {
+                        "sessionId": session_id,
+                        "intent": None,
+                        "answerMode": None,
+                        "agentUsed": ["finance"],
+                        "providerUsed": provider_used,
+                        "modelUsed": model_used,
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+        except Exception as exc:
+            err = str(exc)
+            logger.error(
+                "chat_stream_error",
+                error=err,
+                user_id=req.user_id,
+                session_id=session_id,
+            )
+            yield ServerSentEvent(
+                event="error",
+                data=json.dumps({"detail": "AI agent error. Vui lòng thử lại."}, ensure_ascii=False),
+            )
+
+    return EventSourceResponse(event_generator())

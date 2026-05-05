@@ -34,3 +34,48 @@ LIMIT:
 - Chỉ trả lời về tài chính cá nhân, 6 lọ, chi tiêu, tiết kiệm.
 - Từ chối nhẹ nhàng các câu hỏi ngoài phạm vi tài chính.
 """
+
+
+def get_knowledge_system_prompt() -> str:
+    """Prompt for concept-only questions about the 6-jars method.
+
+    This mode should avoid personal data analysis and focus on explanations.
+    """
+    return (
+        get_finance_system_prompt()
+        + """
+
+MODE: KNOWLEDGE_6JARS
+- User is asking for conceptual guidance (e.g. what is 6 jars, how to apply, examples).
+- Prefer educational explanation over account-specific analysis.
+- Do not call tools unless absolutely necessary.
+"""
+    )
+
+
+def get_personal_system_prompt() -> str:
+    """Prompt for user-specific financial analysis based on available records."""
+    return (
+        get_finance_system_prompt()
+        + """
+
+MODE: PERSONAL_FINANCE
+- User asks about their own spending, balances, trends, budgets, or transactions.
+- Use available tools to fetch real user data before concluding.
+- Provide practical next steps tailored to the returned data.
+"""
+    )
+
+
+def get_hybrid_system_prompt() -> str:
+    """Prompt for mixed intent: concept + user-specific data in one turn."""
+    return (
+        get_finance_system_prompt()
+        + """
+
+MODE: HYBRID
+- The question mixes 6-jars knowledge and user-specific analysis.
+- Briefly explain the principle first, then ground advice in fetched user data.
+- Keep answers concise and action-oriented.
+"""
+    )
