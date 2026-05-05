@@ -27,6 +27,7 @@ def _uid(config: RunnableConfig) -> str:
 
 async def _get_jar_data(user_id: str, jar_code: str) -> dict | None:
     """Get jar balance and statistics from database."""
+    from decimal import Decimal
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
@@ -45,7 +46,14 @@ async def _get_jar_data(user_id: str, jar_code: str) -> dict | None:
             user_id,
             jar_code,
         )
-    return dict(row) if row else None
+    if row is None:
+        return None
+    # Convert Decimal fields to float so they are JSON-serializable
+    data = dict(row)
+    for key, val in data.items():
+        if isinstance(val, Decimal):
+            data[key] = float(val)
+    return data
 
 
 async def _classify_purchase(user_id: str, description: str, amount: float) -> tuple[str, float]:
