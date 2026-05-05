@@ -109,6 +109,7 @@ class FinanceToolAgent:
                 "user_id": user_id,
             }
         }
+        logger.info("tool_cfg", tool_cfg=tool_cfg)
         llm = get_llm()
 
         async def _run(hist: list[BaseMessage], tc: RunnableConfig) -> None:

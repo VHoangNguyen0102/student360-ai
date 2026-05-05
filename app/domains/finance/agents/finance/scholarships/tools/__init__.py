@@ -22,7 +22,7 @@ from .applications import (
     get_my_scholarship_applications,
     get_scholarship_application_detail,
 )
-from .matching import find_scholarship_id_by_name, get_scholarship_details
+from .matching import find_scholarship_id_by_name, get_scholarship_details,get_my_full_profile, match_scholarships_for_profile
 
 ALL_SCHOLARSHIP_TOOLS: list[Any] = [
     # Public scholarship data (khong can user_id)
@@ -31,6 +31,8 @@ ALL_SCHOLARSHIP_TOOLS: list[Any] = [
     # Student-specific: ho so apply cua sinh vien (can user_id tu config)
     get_my_scholarship_applications,
     get_scholarship_application_detail,
+    get_my_full_profile,
+    match_scholarships_for_profile,
 ]
 
 __all__ = ["ALL_SCHOLARSHIP_TOOLS"]

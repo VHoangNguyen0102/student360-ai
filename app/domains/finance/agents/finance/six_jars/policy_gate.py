@@ -10,11 +10,22 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.config import settings
+from app.domains.finance.agents.finance.scholarships.tools import ALL_SCHOLARSHIP_TOOLS
 from app.domains.finance.agents.finance.six_jars.tools import ALL_SIX_JARS_TOOLS
 
 
 # Intentionally separate constant for type + import clarity
 _ALL_TOOLS: list[Any] = ALL_SIX_JARS_TOOLS
+
+
+def _resolve_mode_tools() -> list[Any]:
+  mode = (settings.FINANCE_AGENT_MODE or "six_jars").strip().lower()
+  if mode == "scholarships":
+    return list(ALL_SCHOLARSHIP_TOOLS)
+  if mode == "combined":
+    return [*ALL_SIX_JARS_TOOLS, *ALL_SCHOLARSHIP_TOOLS]
+  return list(ALL_SIX_JARS_TOOLS)
 
 
 def get_tools_for_intent(intent: str) -> list[Any]:
@@ -28,8 +39,8 @@ def get_tools_for_intent(intent: str) -> list[Any]:
       - unknown/fallback → all tools (safe default: never block valid data access)
     """
     if intent == "knowledge_6jars":
-        return []  # Policy: NO personal-data tool calls for pure knowledge questions
-    return list(_ALL_TOOLS)
+      return []  # Policy: NO personal-data tool calls for pure knowledge questions
+    return _resolve_mode_tools()
 
 
 def intent_allows_tools(intent: str) -> bool:
