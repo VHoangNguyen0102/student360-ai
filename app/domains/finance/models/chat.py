@@ -17,12 +17,20 @@ class LlmProvider(str, Enum):
     OLLAMA = "ollama"
 
 
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+    tool_calls: Optional[list] = None
+
+
 class ChatRequest(BaseModel):
     user_id: str
     session_id: Optional[str] = None
     message: str
+    history: Optional[list[ChatMessage]] = None
     context_hint: ContextHint = ContextHint.AUTO
     llm_provider: Optional[LlmProvider] = None
+    llm_model: Optional[str] = None
     metadata: Optional[dict] = None
 
 
@@ -41,4 +49,5 @@ class ChatResponse(BaseModel):
     intent: Optional[str] = None        # knowledge_6jars | personal_finance | hybrid
     answer_mode: Optional[str] = None   # knowledge | personal | hybrid
     provider_used: Optional[str] = None
+    model_used: Optional[str] = None
 

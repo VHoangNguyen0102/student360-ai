@@ -17,15 +17,22 @@ Gợi ý đọc nhanh:
 
 from typing import Literal
 
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
     # Môi trường triển khai. Thường dùng để bật/tắt logging, strictness, v.v.
     ENV: Literal["local", "staging", "production"] = "local"
 
     # LLM provider: gemini, vertexai, or ollama
-    LLM_PROVIDER: Literal["gemini", "vertexai", "ollama"] = "gemini"
+    LLM_PROVIDER: Literal["gemini", "vertexai", "ollama"] = "vertexai"
+    AI_PROVIDER_FALLBACK_ENABLED: bool = False
     OLLAMA_BASE_URL: str = "http://127.0.0.1:11434"
 
     # Tên model Ollama (ví dụ: qwen2.5:3b). Phải được `ollama pull` sẵn.
@@ -39,6 +46,9 @@ class Settings(BaseSettings):
     # Vertex AI (used when LLM_PROVIDER=vertexai)
     VERTEX_AI_PROJECT: str = ""
     VERTEX_AI_LOCATION: str = "us-central1"
+    # Optional endpoint host override, e.g. aiplatform.googleapis.com
+    # If empty, host is derived from VERTEX_AI_LOCATION.
+    VERTEX_AI_ENDPOINT_HOST: str = ""
     VERTEX_LLM_MODEL: str = "gemini-2.5-flash-lite"
     VERTEX_API_KEY: str = ""
 
@@ -71,11 +81,13 @@ class Settings(BaseSettings):
     DAILY_CHAT_LIMIT: int = 50
     MINUTE_CHAT_LIMIT: int = 20
 
-    class Config:
-        # Tự load biến môi trường từ file `.env`.
-        # Có thể override bằng env var thật của OS/container nếu trùng tên.
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+    @property
+    def GEMINI_API_KEYS(self) -> list[str]:
+        """Backward-compatible list format for single or comma-separated Gemini keys."""
+        raw = (self.GEMINI_API_KEY or "").strip()
+        if not raw:
+            return []
+        return [k.strip() for k in raw.split(",") if k.strip()]
 
 
 # Singleton settings: import ở mọi nơi.
