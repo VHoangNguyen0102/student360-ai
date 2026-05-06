@@ -131,18 +131,33 @@ async def run_tool_calling_turn_stream(
 
         tcalls = getattr(ai_msg, "tool_calls", None) or []
         if not tcalls:
-            # Final turn — re-run with streaming to yield tokens.
-            # Remove the last non-streaming AI message and stream it fresh.
+            # Final turn — we already have the full answer in ai_msg.content
+            # from the ainvoke call. We try to re-stream it for the visual effect,
+            # but we MUST have a fallback in case Vertex flaked on the second call.
+            final_content = ai_msg.content or ""
             messages.pop()
-            full_content = ""
-            async for chunk in llm.astream(messages, config=cfg):
-                text = chunk.content if isinstance(chunk.content, str) else ""
-                if text:
-                    full_content += text
-                    yield ("token", text)
             
-            # CRITICAL: Append the full message back to history so subsequent 
-            # turns have the correct alternating roles (User -> AI -> User).
+            full_content = ""
+            try:
+                async for chunk in llm.astream(messages, config=cfg):
+                    text = chunk.content if isinstance(chunk.content, str) else ""
+                    if text:
+                        full_content += text
+                        yield ("token", text)
+                
+                # If astream finished but yielded absolutely nothing (common flakiness)
+                if not full_content and final_content:
+                    yield ("token", final_content)
+                    full_content = final_content
+            except Exception as exc:
+                # If astream failed (e.g. timeout or safety), fallback to our known answer
+                if final_content:
+                    yield ("token", final_content)
+                    full_content = final_content
+                else:
+                    raise exc
+            
+            # Append the full message back to history
             messages.append(AIMessage(content=full_content))
             return
 

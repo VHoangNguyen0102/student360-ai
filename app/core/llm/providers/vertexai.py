@@ -6,6 +6,7 @@ from typing import Any, Optional
 import json
 import uuid
 import httpx
+import structlog
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import (
     AIMessage,
@@ -19,6 +20,9 @@ from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResu
 from pydantic import ConfigDict
 
 from app.config import settings
+
+
+logger = structlog.get_logger()
 
 
 def _extract_json_objects(buffer: str) -> tuple[list[dict], str]:
@@ -53,10 +57,12 @@ def _extract_json_objects(buffer: str) -> tuple[list[dict], str]:
                         break
         if end == -1:
             break
+        
+        raw_json = buffer[start : end + 1]
         try:
-            objects.append(json.loads(buffer[start : end + 1]))
-        except json.JSONDecodeError:
-            pass
+            objects.append(json.loads(raw_json))
+        except json.JSONDecodeError as e:
+            logger.error("vertex_json_decode_error", error=str(e), partial_json=raw_json[:100])
         i = end + 1
     return objects, buffer[i:]
 
@@ -98,16 +104,17 @@ class VertexRestChatModel(BaseChatModel):
             return str(msg.content)
         return str(msg.content)
 
-    def _url(self) -> str:
+    def _url(self, stream: bool = True) -> str:
         # Use explicit host override if provided, else derive from location.
         location = settings.VERTEX_AI_LOCATION
         base_url = (settings.VERTEX_AI_ENDPOINT_HOST or "").strip() or "aiplatform.googleapis.com"
         if not (settings.VERTEX_AI_ENDPOINT_HOST or "").strip() and location and location != "global":
             base_url = f"{location}-aiplatform.googleapis.com"
 
+        method = "streamGenerateContent" if stream else "generateContent"
         return (
             f"https://{base_url}/v1/projects/{settings.VERTEX_AI_PROJECT}/locations/{location}/publishers/google/models/"
-            f"{self.model_name}:streamGenerateContent?key={self.api_key}"
+            f"{self.model_name}:{method}?key={self.api_key}"
         )
 
     def _build_payload(self, messages: list[BaseMessage], **kwargs: Any) -> dict[str, Any]:
@@ -199,14 +206,14 @@ class VertexRestChatModel(BaseChatModel):
         _ = stop, run_manager
         payload = self._build_payload(messages, **kwargs)
         with httpx.Client(timeout=self.timeout_s) as client:
-            res = client.post(self._url(), json=payload)
+            res = client.post(self._url(stream=False), json=payload)
         if res.status_code >= 400:
             raise RuntimeError(
                 f"Vertex REST error {res.status_code}: {res.text}"
             )
-        chunks = res.json()
-        if not isinstance(chunks, list):
-            raise RuntimeError(f"Unexpected Vertex response: {chunks}")
+        data = res.json()
+        chunks = data if isinstance(data, list) else [data]
+
         
         import uuid
         msg = self._extract_ai_message(chunks)
@@ -222,14 +229,14 @@ class VertexRestChatModel(BaseChatModel):
         _ = stop, run_manager
         payload = self._build_payload(messages, **kwargs)
         async with httpx.AsyncClient(timeout=self.timeout_s) as client:
-            res = await client.post(self._url(), json=payload)
+            res = await client.post(self._url(stream=False), json=payload)
         if res.status_code >= 400:
             raise RuntimeError(
                 f"Vertex REST error {res.status_code}: {res.text}"
             )
-        chunks = res.json()
-        if not isinstance(chunks, list):
-            raise RuntimeError(f"Unexpected Vertex response: {chunks}")
+        data = res.json()
+        chunks = data if isinstance(data, list) else [data]
+
 
         import uuid
         msg = self._extract_ai_message(chunks)
@@ -247,12 +254,13 @@ class VertexRestChatModel(BaseChatModel):
         payload = self._build_payload(messages, **stream_kwargs)
         buffer = ""
         async with httpx.AsyncClient(timeout=self.timeout_s) as client:
-            async with client.stream("POST", self._url(), json=payload) as response:
+            async with client.stream("POST", self._url(stream=True), json=payload) as response:
                 if response.status_code >= 400:
                     body = await response.aread()
                     raise RuntimeError(
                         f"Vertex REST stream error {response.status_code}: {body.decode()}"
                     )
+                yielded_any = False
                 async for text_chunk in response.aiter_text():
                     buffer += text_chunk
                     objs, buffer = _extract_json_objects(buffer)
@@ -268,6 +276,10 @@ class VertexRestChatModel(BaseChatModel):
                                     if run_manager:
                                         await run_manager.on_llm_new_token(text)
                                     yield chunk
+                                    yielded_any = True
+                
+                if not yielded_any:
+                    logger.warning("vertex_stream_empty", buffer_leftover=buffer[:200])
 
 
 def build_vertexai_chat_model(model: str | None = None, temperature: float = 0.1) -> BaseChatModel:

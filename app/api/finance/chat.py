@@ -23,10 +23,12 @@ from langchain_core.messages import (
 )
 
 from app.domains.finance.agents.finance.agent import get_finance_agent
+from app.domains.finance.agents.finance.action_extractor import ActionExtractor
 from app.core.llm.runtime_model import llm_model_override
 from app.core.llm.runtime_provider import llm_provider_override
 from app.config import settings
 from app.domains.finance.models.chat import ChatRequest, ChatResponse, ChatUsage
+from app.domains.finance.models.action_proposal import ActionProposal
 from app.utils.auth import verify_service_token
 
 logger = structlog.get_logger()
@@ -377,6 +379,15 @@ async def chat(
     if not isinstance(agent_used, list) or not agent_used:
         agent_used = ["finance"]
 
+    # Extract action proposals if requested
+    actions: list[ActionProposal] = []
+    if req.enable_actions:
+        actions = await ActionExtractor().extract(
+            user_message=req.message,
+            ai_reply=reply,
+            user_id=req.user_id,
+        )
+
     return ChatResponse(
         reply=reply,
         session_id=session_id,
@@ -386,6 +397,7 @@ async def chat(
         answer_mode=answer_mode,
         provider_used=provider_used,
         model_used=model_used,
+        actions=actions,
     )
 
 
@@ -440,6 +452,7 @@ async def chat_stream(
     )
 
     async def event_generator():
+        full_reply_parts: list[str] = []
         try:
             with llm_provider_override(provider_used), llm_model_override(req.llm_model):
                 async for event_type, data in agent.astream(
@@ -453,15 +466,27 @@ async def chat_stream(
                             data=json.dumps({"message": data}, ensure_ascii=False),
                         )
                     elif event_type == "token":
+                        full_reply_parts.append(data)
                         yield ServerSentEvent(
                             event="token",
                             data=json.dumps({"text": data}, ensure_ascii=False),
                         )
 
+            # Extract action proposals if the client opted in
+            actions: list[ActionProposal] = []
+            if req.enable_actions and full_reply_parts:
+                full_reply = "".join(full_reply_parts)
+                actions = await ActionExtractor().extract(
+                    user_message=req.message,
+                    ai_reply=full_reply,
+                    user_id=req.user_id,
+                )
+
             logger.info(
                 "chat_stream_completed",
                 user_id=req.user_id,
                 session_id=session_id,
+                action_proposals_count=len(actions),
             )
             yield ServerSentEvent(
                 event="done",
@@ -473,6 +498,7 @@ async def chat_stream(
                         "agentUsed": ["finance"],
                         "providerUsed": provider_used,
                         "modelUsed": model_used,
+                        "actions": [p.model_dump() for p in actions],
                     },
                     ensure_ascii=False,
                 ),
