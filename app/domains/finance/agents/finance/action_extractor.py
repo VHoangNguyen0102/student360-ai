@@ -31,12 +31,23 @@ Các loại hành động được hỗ trợ:
 - DISTRIBUTE_INCOME: Phân bổ thu nhập vào các lọ theo tỷ lệ 6 lọ
 - TRANSFER_BETWEEN_JARS: Chuyển tiền từ lọ này sang lọ khác
 - UPDATE_ALLOCATION: Điều chỉnh tỷ lệ % phân bổ của các lọ
+- CREATE_AUTO_TRANSFER_SCHEDULE: Tạo lịch tự động chuyển/tiết kiệm định kỳ
+- DELETE_AUTO_TRANSFER_SCHEDULE: Xóa một lịch tự động theo tên
+- TOGGLE_AUTO_TRANSFER_SCHEDULE: Tạm dừng hoặc bật lại một lịch tự động (không xóa)
+- UPDATE_AUTO_TRANSFER_SCHEDULE: Sửa thông tin lịch tự động (số tiền, tần suất, ngày...)
+- DELETE_TRANSACTION: Xóa một giao dịch đã ghi nhận
 
 Quy tắc nhận dạng:
 - "vừa chi / mua / ăn / uống / thanh toán + số tiền" → CREATE_TRANSACTION (type=EXPENSE)
 - "nhận lương / nhận tiền / có thu nhập + số tiền" → DISTRIBUTE_INCOME
 - "chuyển từ lọ X sang lọ Y + số tiền" → TRANSFER_BETWEEN_JARS
 - "tăng/giảm/điều chỉnh tỷ lệ lọ X lên/xuống N%" → UPDATE_ALLOCATION
+- "mỗi tháng/tuần/ngày + chuyển/tiết kiệm/để dành + số tiền (+ vào lọ X)" → CREATE_AUTO_TRANSFER_SCHEDULE
+  (KHÔNG đề xuất nếu không rõ tần suất hoặc số tiền)
+- "xóa/hủy lịch [tên lịch]" → DELETE_AUTO_TRANSFER_SCHEDULE (params: scheduleName)
+- "tạm dừng/dừng/bật lại/kích hoạt lịch [tên lịch]" → TOGGLE_AUTO_TRANSFER_SCHEDULE (params: scheduleName)
+- "sửa/đổi/cập nhật lịch [tên lịch] + thay đổi" → UPDATE_AUTO_TRANSFER_SCHEDULE (params: scheduleName + trường cần sửa)
+- "xóa giao dịch [mô tả]" → DELETE_TRANSACTION (params: transactionId nếu có trong context)
 
 Mã lọ chuẩn (dùng trong params.jarCode hoặc params.sourceJarCode/targetJarCode):
 - essentials (Thiết yếu/Chi tiêu hàng ngày, ~55%)
@@ -71,13 +82,55 @@ Trả về JSON với format:
         "transactionDate": "2026-05-05"
       }},
       "risk_level": "low"
+    }},
+    {{
+      "type": "CREATE_AUTO_TRANSFER_SCHEDULE",
+      "title": "Tạo lịch tiết kiệm hàng tháng",
+      "description": "500.000đ/tháng • vào ngày 1 • Lọ Tiết kiệm",
+      "params": {{
+        "name": "Tiết kiệm tháng",
+        "amount": 500000,
+        "frequency": "MONTHLY",
+        "allocationType": "SINGLE_JAR",
+        "targetJarCode": "reserve",
+        "dayOfMonth": 1
+      }},
+      "risk_level": "medium"
+    }},
+    {{
+      "type": "DELETE_AUTO_TRANSFER_SCHEDULE",
+      "title": "Xóa lịch tiết kiệm tháng",
+      "description": "Xóa vĩnh viễn lịch tự động",
+      "params": {{"scheduleName": "Tiết kiệm tháng"}},
+      "risk_level": "high"
+    }},
+    {{
+      "type": "TOGGLE_AUTO_TRANSFER_SCHEDULE",
+      "title": "Tạm dừng lịch tiết kiệm tháng",
+      "description": "Tạm dừng không xóa, có thể bật lại",
+      "params": {{"scheduleName": "Tiết kiệm tháng"}},
+      "risk_level": "low"
+    }},
+    {{
+      "type": "UPDATE_AUTO_TRANSFER_SCHEDULE",
+      "title": "Sửa lịch tiết kiệm tháng",
+      "description": "Đổi số tiền thành 800.000đ/tháng",
+      "params": {{"scheduleName": "Tiết kiệm tháng", "amount": 800000}},
+      "risk_level": "medium"
+    }},
+    {{
+      "type": "DELETE_TRANSACTION",
+      "title": "Xóa giao dịch cà phê",
+      "description": "Chi 45.000đ • Lọ Hưởng thụ",
+      "params": {{"transactionId": "uuid-from-context"}},
+      "risk_level": "high"
     }}
   ]
 }}
 
 Quy tắc quan trọng:
 - Chỉ đề xuất hành động nếu có đủ thông tin (số tiền, loại giao dịch)
-- Tối đa 2 đề xuất, ưu tiên hành động rõ ràng nhất
+- Tối đa 10 đề xuất, ưu tiên hành động rõ ràng nhất
 - Nếu không có hành động nào phù hợp, trả về {{"actions": []}}
 - Không bao giờ đề xuất khi không chắc chắn về số tiền
 - Định dạng số tiền là số nguyên VND (ví dụ: 45000, không phải "45k" hay "45,000đ")
@@ -181,7 +234,7 @@ class ActionExtractor:
         if not isinstance(actions_raw, list):
             return []
 
-        for item in actions_raw[:2]:
+        for item in actions_raw[:10]:
             if not isinstance(item, dict):
                 continue
             try:
