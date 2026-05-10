@@ -451,6 +451,14 @@ async def chat_stream(
         model_used=model_used,
     )
 
+    _ACTION_KEYWORDS = [
+        "ghi vào", "vừa chi", "vừa mua", "vừa ăn", "vừa uống", "vừa thanh toán",
+        "nhận lương", "nhận tiền", "có thu nhập", "chuyển từ lọ", "phân bổ",
+        "xóa lịch", "hủy lịch", "tạm dừng lịch", "bật lại lịch", "sửa lịch",
+        "tạo lịch", "mỗi tháng", "mỗi tuần", "tiết kiệm định kỳ",
+        "xóa giao dịch", "ghi chi", "ghi thu",
+    ]
+
     async def event_generator():
         full_reply_parts: list[str] = []
         try:
@@ -482,11 +490,18 @@ async def chat_stream(
                     user_id=req.user_id,
                 )
 
+            # Detect action intent when mode is disabled — hint the client to enable it
+            action_hint = False
+            if not req.enable_actions and req.message:
+                msg_lower = req.message.lower()
+                action_hint = any(kw in msg_lower for kw in _ACTION_KEYWORDS)
+
             logger.info(
                 "chat_stream_completed",
                 user_id=req.user_id,
                 session_id=session_id,
                 action_proposals_count=len(actions),
+                action_hint=action_hint,
             )
             yield ServerSentEvent(
                 event="done",
@@ -499,6 +514,7 @@ async def chat_stream(
                         "providerUsed": provider_used,
                         "modelUsed": model_used,
                         "actions": [p.model_dump() for p in actions],
+                        "actionHint": action_hint,
                     },
                     ensure_ascii=False,
                 ),
