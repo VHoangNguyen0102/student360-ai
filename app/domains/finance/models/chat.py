@@ -3,6 +3,8 @@ from pydantic import BaseModel
 from typing import Optional
 from enum import Enum
 
+from app.domains.finance.models.action_proposal import ActionProposal
+
 
 class ContextHint(str, Enum):
     FINANCE = "finance"
@@ -17,13 +19,22 @@ class LlmProvider(str, Enum):
     OLLAMA = "ollama"
 
 
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+    tool_calls: Optional[list] = None
+
+
 class ChatRequest(BaseModel):
     user_id: str
     session_id: Optional[str] = None
     message: str
+    history: Optional[list[ChatMessage]] = None
     context_hint: ContextHint = ContextHint.AUTO
     llm_provider: Optional[LlmProvider] = None
+    llm_model: Optional[str] = None
     metadata: Optional[dict] = None
+    enable_actions: bool = False
 
 
 class ChatUsage(BaseModel):
@@ -41,4 +52,6 @@ class ChatResponse(BaseModel):
     intent: Optional[str] = None        # knowledge_6jars | personal_finance | hybrid
     answer_mode: Optional[str] = None   # knowledge | personal | hybrid
     provider_used: Optional[str] = None
+    model_used: Optional[str] = None
+    actions: Optional[list[ActionProposal]] = None
 

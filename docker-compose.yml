@@ -6,6 +6,8 @@ services:
     env_file:
       - .env
     restart: unless-stopped
+    volumes:
+      - .:/app
     # When using profile local-llm, set in .env: LLM_PROVIDER=ollama and
     # OLLAMA_BASE_URL=http://ollama:11434 so the app reaches Ollama by service name.
 
