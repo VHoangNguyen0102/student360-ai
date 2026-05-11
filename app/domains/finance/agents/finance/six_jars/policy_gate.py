@@ -19,10 +19,6 @@ from app.domains.finance.agents.finance.six_jars.tools.knowledge import get_fina
 # Knowledge tool is safe for all intents — it contains no personal data
 KNOWLEDGE_ONLY_TOOLS: list[Any] = [get_financial_guidelines]
 
-# Personal data tools — restricted to personal_finance and hybrid intents
-_ALL_TOOLS: list[Any] = ALL_SIX_JARS_TOOLS
-
-
 def _resolve_mode_tools() -> list[Any]:
   mode = (settings.FINANCE_AGENT_MODE or "six_jars").strip().lower()
   if mode == "scholarships":
@@ -30,6 +26,10 @@ def _resolve_mode_tools() -> list[Any]:
   if mode == "combined":
     return [*ALL_SIX_JARS_TOOLS, *ALL_SCHOLARSHIP_TOOLS]
   return list(ALL_SIX_JARS_TOOLS)
+
+
+# Personal data tools — restricted to personal_finance and hybrid intents
+_ALL_TOOLS: list[Any] = _resolve_mode_tools()
 
 
 def get_tools_for_intent(intent: str) -> list[Any]:
@@ -42,10 +42,11 @@ def get_tools_for_intent(intent: str) -> list[Any]:
       - hybrid           → all tools available
       - unknown/fallback → all tools (safe default: never block valid data access)
     """
-    #return ALL_SCHOLARSHIP_TOOLS
     if intent == "knowledge_6jars":
         return list(KNOWLEDGE_ONLY_TOOLS)
-    return list(_ALL_TOOLS)
+    if intent == "scholarships":
+        return list(ALL_SCHOLARSHIP_TOOLS)
+    return list(_resolve_mode_tools())
 
 
 def intent_allows_tools(intent: str) -> bool:

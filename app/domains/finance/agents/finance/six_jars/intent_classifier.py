@@ -1,10 +1,11 @@
 """
 Six Jars domain — Intent Classifier.
 
-Classifies user messages into one of 3 intents:
-  knowledge_6jars  — câu hỏi kiến thức/nguyên tắc 6 lọ (không cần tool)
-  personal_finance — câu hỏi về tài chính cá nhân (cần tool)
-  hybrid           — kết hợp kiến thức + cá nhân (cần tool + lời khuyên)
+Classifies user messages into one of 4 intents:
+    knowledge_6jars  — câu hỏi kiến thức/nguyên tắc 6 lọ (không cần tool)
+    personal_finance — câu hỏi về tài chính cá nhân (cần tool)
+    hybrid           — kết hợp kiến thức + cá nhân (cần tool + lời khuyên)
+    scholarships     — câu hỏi về học bổng (điều kiện, đăng ký, hồ sơ, xét duyệt)
 
 Priority:
   1. Rule-based keyword matching (fast, no LLM cost)
@@ -21,7 +22,7 @@ import structlog
 
 logger = structlog.get_logger()
 
-Intent = Literal["knowledge_6jars", "personal_finance", "hybrid"]
+Intent = Literal["knowledge_6jars", "personal_finance", "hybrid", "scholarships"]
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Keyword lists
@@ -80,6 +81,27 @@ _KNOWLEDGE_KEYWORDS: list[str] = [
     "tiet kiem mua",
     "mẹo sinh viên",
     "meo tai chinh",
+]
+
+# Strong signals → scholarships (questions about scholarship domain)
+_SCHOLARSHIP_KEYWORDS: list[str] = [
+    "học bổng",
+    "hoc bong",
+    "scholarship",
+    "hồ sơ học bổng",
+    "ho so hoc bong",
+    "đăng ký học bổng",
+    "dang ky hoc bong",
+    "xét duyệt",
+    "xet duyet",
+    "tài trợ",
+    "tai tro",
+    "học phí hỗ trợ",
+    "hoc phi ho tro",
+    "scholarship requirements",
+    "scholarship documents",
+    "kết quả học bổng",
+    "ket qua hoc bong",
 ]
 
 # Strong signals → personal_finance (questions about THIS user's data)
@@ -247,9 +269,11 @@ def classify_by_rules(message: str) -> tuple[Intent | None, float, str]:
     """
     Return (intent, confidence, reason) or (None, 0.0, '') if inconclusive.
 
-    Priority: hybrid > personal > knowledge
+    Priority: scholarships > hybrid > personal > knowledge
     (hybrid is checked first because it often contains both keyword sets)
     """
+    if _has_any(message, _SCHOLARSHIP_KEYWORDS):
+        return "scholarships", 0.90, "rule:scholarship_keywords"
     if _has_any(message, _HYBRID_KEYWORDS):
         return "hybrid", 0.88, "rule:hybrid_keywords"
 
@@ -308,7 +332,7 @@ async def classify_by_llm(message: str) -> tuple[Intent, float, str]:
         parsed = _extract_json(raw) or {}
 
         intent_raw = str(parsed.get("intent", "hybrid")).strip().lower()
-        if intent_raw not in {"knowledge_6jars", "personal_finance", "hybrid"}:
+        if intent_raw not in {"knowledge_6jars", "personal_finance", "hybrid", "scholarships"}:
             intent_raw = "hybrid"
 
         conf = float(parsed.get("confidence", 0.5))

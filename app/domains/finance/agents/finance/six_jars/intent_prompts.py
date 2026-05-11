@@ -2,9 +2,10 @@
 Six Jars domain — LLM prompts for intent classification.
 
 Intent labels:
-  knowledge_6jars  — câu hỏi về kiến thức/nguyên tắc phương pháp 6 lọ
-  personal_finance — câu hỏi về tài chính CÁ NHÂN của user (cần dữ liệu DB)
-  hybrid           — kết hợp kiến thức + cá nhân
+   knowledge_6jars  — câu hỏi về kiến thức/nguyên tắc phương pháp 6 lọ
+   personal_finance — câu hỏi về tài chính CÁ NHÂN của user (cần dữ liệu DB)
+   hybrid           — kết hợp kiến thức + cá nhân
+   scholarships     — câu hỏi về học bổng (điều kiện, đăng ký, hồ sơ, xét duyệt)
 """
 from __future__ import annotations
 
@@ -17,7 +18,7 @@ INTENT_CLASSIFIER_SYSTEM_PROMPT = dedent(
 
     NHIỆM VỤ: Xác định loại câu hỏi của người dùng về tài chính 6 Lọ.
 
-    3 NHÃN ĐƯỢC PHÉP:
+   4 NHÃN ĐƯỢC PHÉP:
     ─────────────────────────────────────────────────────────
     1. knowledge_6jars
        Câu hỏi về KIẾN THỨC / NGUYÊN TẮC phương pháp 6 Lọ.
@@ -54,15 +55,24 @@ INTENT_CLASSIFIER_SYSTEM_PROMPT = dedent(
        - "Lọ essentials của tôi đang vượt quá mức bình thường, tôi phải làm gì?"
        - "Tôi nên tăng% cho lọ nào dựa trên chi tiêu hiện tại?"
        - "Số dư reserve của tôi có đạt mục tiêu 3 tháng chi phí chưa?"
-
+       
+    4. scholarships
+         Câu hỏi về HỌC BỔNG trong hệ thống (điều kiện, đăng ký, hồ sơ, xét duyệt, kết quả).
+         Ví dụ:
+         - "Học bổng này yêu cầu gì?"
+         - "Tôi đăng ký học bổng như thế nào?"
+         - "Hồ sơ học bổng của tôi đang ở trạng thái gì?"
+         - "Kết quả xét duyệt học bổng khi nào có?"
+         - "Tôi cần nộp tài liệu gì cho học bổng X?"
     ─────────────────────────────────────────────────────────
     QUY TẮC PHÂN LOẠI:
-    - Nếu câu hỏi chỉ về khái niệm/nguyên tắc → knowledge_6jars
+   - Nếu câu hỏi chỉ về khái niệm/nguyên tắc → knowledge_6jars
+   - Nếu câu hỏi về học bổng → scholarships
     - Nếu câu hỏi chứa "của tôi", "tôi đã", "tôi có", số liệu cá nhân → personal_finance hoặc hybrid
     - Nếu cần CÙNG LÚC cả dữ liệu thực tế VÀ lời khuyên/so sánh với chuẩn → hybrid
     - Khi không chắc chắn → hybrid (an toàn hơn)
 
     PHẢN HỒI: Chỉ trả về JSON thuần túy (không markdown, không giải thích):
-    {"intent": "knowledge_6jars", "confidence": 0.92, "reason": "câu hỏi về nguyên tắc chung"}
+   {"intent": "knowledge_6jars", "confidence": 0.92, "reason": "câu hỏi về nguyên tắc chung"}
     """
 ).strip()
