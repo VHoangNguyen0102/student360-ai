@@ -39,6 +39,75 @@ def _serialize(value: Any) -> Any:
 	return value
 
 
+def _ensure_uuid_list(value: Any) -> list[str]:
+	if value is None:
+		return []
+	if isinstance(value, list):
+		return [str(item) for item in value if str(item).strip()]
+	if isinstance(value, tuple):
+		return [str(item) for item in value if str(item).strip()]
+	if isinstance(value, str):
+		try:
+			parsed = json.loads(value)
+			if isinstance(parsed, list):
+				return [str(item) for item in parsed if str(item).strip()]
+		except json.JSONDecodeError:
+			pass
+		return [item.strip() for item in value.split(",") if item.strip()]
+	return []
+
+
+def _build_scholarship_detail_response(
+	scholarship_data: dict[str, Any],
+	requirement_items: list[dict[str, Any]],
+	document_items: list[dict[str, Any]],
+	now: datetime,
+	include_warnings: bool = False,
+) -> dict[str, Any]:
+	deadline = scholarship_data.get("application_deadline")
+	is_open_for_application = bool(
+		scholarship_data.get("is_active")
+		and (deadline is None or deadline >= now)
+	)
+
+	required_requirement_count = sum(1 for item in requirement_items if item.get("is_required"))
+	required_document_count = sum(1 for item in document_items if item.get("is_required"))
+
+	response = {
+		"scholarship": _serialize(scholarship_data),
+		"conditions": {
+			"eligibility_criteria": _serialize(scholarship_data.get("eligibility_criteria")),
+			"benefits": _serialize(scholarship_data.get("benefits")),
+			"is_active": _serialize(scholarship_data.get("is_active")),
+			"application_deadline": _serialize(deadline),
+			"result_announcement_date": _serialize(scholarship_data.get("result_announcement_date")),
+			"is_open_for_application": is_open_for_application,
+		},
+		"requirements": {
+			"total": len(requirement_items),
+			"required_count": required_requirement_count,
+			"items": _serialize(requirement_items),
+		},
+		"documents": {
+			"total": len(document_items),
+			"required_count": required_document_count,
+			"items": _serialize(document_items),
+		},
+		"checklist_summary": {
+			"must_satisfy_requirements": required_requirement_count,
+			"must_submit_documents": required_document_count,
+		},
+	}
+
+	if include_warnings:
+		if not requirement_items:
+			response["warning_requirements"] = "Học bổng chưa có requirement checklist."
+		if not document_items:
+			response["warning_documents"] = "Học bổng chưa có document checklist."
+
+	return response
+
+
 def _normalize_text(text: str) -> str:
 	"""Normalize text to improve matching tolerance (accent/case/punctuation-insensitive)."""
 	if not text:
@@ -395,45 +464,13 @@ async def get_scholarship_details(scholarship_id: str) -> str:
 		requirement_items = [dict(item) for item in requirements]
 		document_items = [dict(item) for item in documents]
 
-		required_requirement_count = sum(1 for item in requirement_items if item.get("is_required"))
-		required_document_count = sum(1 for item in document_items if item.get("is_required"))
-
-		deadline = scholarship_data.get("application_deadline")
-		is_open_for_application = bool(
-			scholarship_data.get("is_active")
-			and (deadline is None or deadline >= datetime.utcnow())
+		response = _build_scholarship_detail_response(
+			scholarship_data,
+			requirement_items,
+			document_items,
+			datetime.utcnow(),
+			include_warnings=True,
 		)
-
-		response = {
-			"scholarship": _serialize(scholarship_data),
-			"conditions": {
-				"eligibility_criteria": _serialize(scholarship_data.get("eligibility_criteria")),
-				"benefits": _serialize(scholarship_data.get("benefits")),
-				"is_active": _serialize(scholarship_data.get("is_active")),
-				"application_deadline": _serialize(deadline),
-				"result_announcement_date": _serialize(scholarship_data.get("result_announcement_date")),
-				"is_open_for_application": is_open_for_application,
-			},
-			"requirements": {
-				"total": len(requirement_items),
-				"required_count": required_requirement_count,
-				"items": _serialize(requirement_items),
-			},
-			"documents": {
-				"total": len(document_items),
-				"required_count": required_document_count,
-				"items": _serialize(document_items),
-			},
-			"checklist_summary": {
-				"must_satisfy_requirements": required_requirement_count,
-				"must_submit_documents": required_document_count,
-			},
-		}
-
-		if not requirement_items:
-			response["warning_requirements"] = "Học bổng chưa có requirement checklist."
-		if not document_items:
-			response["warning_documents"] = "Học bổng chưa có document checklist."
 
 		return json.dumps(response, ensure_ascii=False)
 
@@ -443,6 +480,146 @@ async def get_scholarship_details(scholarship_id: str) -> str:
 			{
 				"error": f"Lỗi lấy chi tiết học bổng: {str(exc)}",
 				"scholarship_id": raw_id,
+			},
+			ensure_ascii=False,
+		)
+
+
+@tool
+async def get_all_scholarships(
+	active_only: bool = True,
+	open_only: bool = False,
+	limit: int = 200,
+	offset: int = 0,
+) -> str:
+	"""
+	Lấy danh sách học bổng với filter cơ bản (active/open) và phân trang.
+
+	Args:
+		active_only: Nếu true, chỉ lấy học bổng is_active = true.
+		open_only: Nếu true, chỉ lấy học bổng còn hạn nộp (deadline >= hiện tại).
+		limit: Số bản ghi trả về (1-500).
+		offset: Vị trí bắt đầu (>= 0).
+
+	Returns:
+		JSON string chứa danh sách học bổng và thông tin phân trang.
+	"""
+	safe_limit = max(1, min(int(limit), 500))
+	safe_offset = max(0, int(offset))
+
+	try:
+		now = datetime.utcnow()
+		pool = await get_pool()
+		async with pool.acquire() as conn:
+			rows = await conn.fetch(
+				"""
+				SELECT s.id,
+				       s.name,
+				       s.description,
+				       s.eligibility_criteria,
+				       s.benefits,
+				       s.provider,
+				       s.is_active,
+				       s.application_deadline,
+				       s.result_announcement_date,
+				       s.updated_at,
+				       sc.name AS category_name
+				FROM scholarships s
+				LEFT JOIN scholarship_categories sc ON sc.id = s.category_id
+				WHERE ($1::boolean = false OR s.is_active = true)
+				  AND ($2::boolean = false OR (s.is_active = true AND (s.application_deadline IS NULL OR s.application_deadline >= $3)))
+				ORDER BY s.updated_at DESC NULLS LAST
+				LIMIT $4 OFFSET $5
+				""",
+				active_only,
+				open_only,
+				now,
+				safe_limit,
+				safe_offset,
+			)
+
+			scholarship_ids = [row["id"] for row in rows if row.get("id")]
+			requirement_items_map: dict[str, list[dict[str, Any]]] = {}
+			document_items_map: dict[str, list[dict[str, Any]]] = {}
+			if scholarship_ids:
+				requirement_rows = await conn.fetch(
+					"""
+					SELECT id,
+					       scholarship_id,
+					       title,
+					       description,
+					       is_required,
+					       sort_order,
+					       created_at,
+					       updated_at
+					FROM scholarship_requirements
+					WHERE scholarship_id = ANY($1::uuid[])
+					ORDER BY sort_order ASC, created_at ASC
+					""",
+					scholarship_ids,
+				)
+				for row in requirement_rows:
+					item = dict(row)
+					sid = str(item.get("scholarship_id"))
+					requirement_items_map.setdefault(sid, []).append(item)
+
+				document_rows = await conn.fetch(
+					"""
+					SELECT id,
+					       scholarship_id,
+					       document_name,
+					       document_type,
+					       is_required,
+					       max_file_size_mb,
+					       sample_url,
+					       created_at,
+					       updated_at
+					FROM scholarship_documents
+					WHERE scholarship_id = ANY($1::uuid[])
+					ORDER BY is_required DESC, created_at ASC
+					""",
+					scholarship_ids,
+				)
+				for row in document_rows:
+					item = dict(row)
+					sid = str(item.get("scholarship_id"))
+					document_items_map.setdefault(sid, []).append(item)
+
+		items = []
+		for row in rows:
+			row_dict = dict(row)
+			sid = str(row_dict.get("id"))
+			requirement_items = requirement_items_map.get(sid, [])
+			document_items = document_items_map.get(sid, [])
+			items.append(
+				_build_scholarship_detail_response(
+					row_dict,
+					requirement_items,
+					document_items,
+					now,
+					include_warnings=True,
+				)
+			)
+
+		payload = {
+			"filters": {
+				"active_only": active_only,
+				"open_only": open_only,
+			},
+			"paging": {
+				"limit": safe_limit,
+				"offset": safe_offset,
+				"returned": len(items),
+			},
+			"items": _serialize(items),
+		}
+
+		return json.dumps(payload, ensure_ascii=False)
+	except Exception as exc:  # pragma: no cover - defensive fallback for tool runtime
+		logger.exception("get_all_scholarships_failed", error=str(exc))
+		return json.dumps(
+			{
+				"error": f"Lỗi lấy danh sách học bổng: {str(exc)}",
 			},
 			ensure_ascii=False,
 		)
@@ -557,192 +734,192 @@ async def get_my_full_profile(config: RunnableConfig) -> str:
 				user_id,
 			)
 
-			# if not user_row:
-			# 	return json.dumps(
-			# 		{"error": "Không tìm thấy sinh viên.", "user_id": user_id},
-			# 		ensure_ascii=False,
-			# 	)
+			if not user_row:
+				return json.dumps(
+					{"error": "Không tìm thấy sinh viên.", "user_id": user_id},
+					ensure_ascii=False,
+				)
 
-			# account_id = user_row.get("account_id")
-			# skill_ids = user_row.get("skill_ids") or []
-			# interest_ids = user_row.get("interest_ids") or []
+			account_id = user_row.get("account_id")
+			skill_ids = _ensure_uuid_list(user_row.get("skill_ids"))
+			interest_ids = _ensure_uuid_list(user_row.get("interest_ids"))
 
-			# academic_rows = await conn.fetch(
-			# 	"""
-			# 	SELECT id,
-			# 		   university,
-			# 		   student_code,
-			# 		   education_program,
-			# 		   degree_level,
-			# 		   faculty,
-			# 		   major,
-			# 		   minor,
-			# 		   program_type,
-			# 		   enrollment_year,
-			# 		   expected_graduation_year,
-			# 		   current_status,
-			# 		   current_year,
-			# 		   current_semester,
-			# 		   created_at,
-			# 		   updated_at
-			# 	FROM student_academic_profiles
-			# 	WHERE user_id = $1
-			# 	ORDER BY updated_at DESC NULLS LAST
-			# 	""",
-			# 	user_id,
-			# )
-			# skills = []
-			# if skill_ids:
-			# 	skills = await conn.fetch(
-			# 		"""
-			# 		SELECT id, name, description, created_at, updated_at
-			# 		FROM profile_skills
-			# 		WHERE id = ANY($1::uuid[])
-			# 		""",
-			# 		skill_ids,
-			# 	)
+			academic_rows = await conn.fetch(
+				"""
+				SELECT id,
+					   university,
+					   student_code,
+					   education_program,
+					   degree_level,
+					   faculty,
+					   major,
+					   minor,
+					   program_type,
+					   enrollment_year,
+					   expected_graduation_year,
+					   current_status,
+					   current_year,
+					   current_semester,
+					   created_at,
+					   updated_at
+				FROM student_academic_profiles
+				WHERE user_id = $1
+				ORDER BY updated_at DESC NULLS LAST
+				""",
+				user_id,
+			)
+			skills = []
+			if skill_ids:
+				skills = await conn.fetch(
+					"""
+					SELECT id, name, description, created_at, updated_at
+					FROM skills
+					WHERE id = ANY($1::uuid[])
+					""",
+					skill_ids,
+				)
 
-			# interests = []
-			# if interest_ids:
-			# 	interests = await conn.fetch(
-			# 		"""
-			# 		SELECT *
-			# 		FROM profile_interests
-			# 		WHERE id = ANY($1::uuid[])
-			# 		""",
-			# 		interest_ids,
-			# 	)
+			interests = []
+			if interest_ids:
+				interests = await conn.fetch(
+					"""
+					SELECT *
+					FROM profile_interests
+					WHERE id = ANY($1::uuid[])
+					""",
+					interest_ids,
+				)
 
-			# scholarship_rows = await conn.fetch(
-			# 	"""
-			# 	SELECT ss.id,
-			# 		   ss.scholarship_id,
-			# 		   ss.status,
-			# 		   ss.application_date,
-			# 		   ss.decision_date,
-			# 		   ss.awarded_amount,
-			# 		   ss.currency,
-			# 		   ss.submitted_form_url,
-			# 		   ss.note,
-			# 		   ss.feedback,
-			# 		   ss.created_at,
-			# 		   ss.updated_at,
-			# 		   s.name AS scholarship_name,
-			# 		   s.provider,
-			# 		   s.amount AS scholarship_amount,
-			# 		   s.currency AS scholarship_currency,
-			# 		   s.application_deadline,
-			# 		   s.result_announcement_date
-			# 	FROM student_scholarships ss
-			# 	JOIN scholarships s ON s.id = ss.scholarship_id
-			# 	WHERE ss.user_id = $1
-			# 	ORDER BY ss.created_at DESC
-			# 	""",
-			# 	user_id,
-			# )
+			scholarship_rows = await conn.fetch(
+				"""
+				SELECT ss.id,
+					   ss.scholarship_id,
+					   ss.status,
+					   ss.application_date,
+					   ss.decision_date,
+					   ss.awarded_amount,
+					   ss.currency,
+					   ss.submitted_form_url,
+					   ss.note,
+					   ss.feedback,
+					   ss.created_at,
+					   ss.updated_at,
+					   s.name AS scholarship_name,
+					   s.provider,
+					   s.amount AS scholarship_amount,
+					   s.currency AS scholarship_currency,
+					   s.application_deadline,
+					   s.result_announcement_date
+				FROM student_scholarships ss
+				JOIN scholarships s ON s.id = ss.scholarship_id
+				WHERE ss.user_id = $1
+				ORDER BY ss.created_at DESC
+				""",
+				user_id,
+			)
 
-			# saved_job_rows = await conn.fetch(
-			# 	"""
-			# 	SELECT usj.id,
-			# 		   usj.job_id,
-			# 		   usj.note,
-			# 		   usj.saved_at,
-			# 		   j.title,
-			# 		   j.company_id,
-			# 		   j.job_type,
-			# 		   j.salary_min,
-			# 		   j.salary_max,
-			# 		   j.currency_id,
-			# 		   j.application_method,
-			# 		   j.deadline,
-			# 		   j.is_active
-			# 	FROM user_saved_jobs usj
-			# 	JOIN jobs j ON j.id = usj.job_id
-			# 	WHERE usj.user_id = $1
-			# 	ORDER BY usj.saved_at DESC
-			# 	""",
-			# 	user_id,
-			# )
+			saved_job_rows = await conn.fetch(
+				"""
+				SELECT usj.id,
+					   usj.job_id,
+					   usj.note,
+					   usj.saved_at,
+					   j.title,
+					   j.company_id,
+					   j.job_type,
+					   j.salary_min,
+					   j.salary_max,
+					   j.currency_id,
+					   j.application_method,
+					   j.deadline,
+					   j.is_active
+				FROM user_saved_jobs usj
+				JOIN jobs j ON j.id = usj.job_id
+				WHERE usj.user_id = $1
+				ORDER BY usj.saved_at DESC
+				""",
+				user_id,
+			)
 
-			# club_rows = []
-			# if account_id:
-			# 	club_rows = await conn.fetch(
-			# 		"""
-			# 		SELECT m.id AS membership_id,
-			# 			   m.role,
-			# 			   m.status,
-			# 			   m.joined_at,
-			# 			   m.left_at,
-			# 			   c.id AS club_id,
-			# 			   c.name,
-			# 			   c.description,
-			# 			   c.tags,
-			# 			   c.members_count,
-			# 			   c.events_count,
-			# 			   c.posts_count,
-			# 			   c.banner_url,
-			# 			   c.logo_url,
-			# 			   c.contact_email,
-			# 			   c.website_url,
-			# 			   c.meeting_schedule,
-			# 			   c.meeting_location,
-			# 			   c.status AS club_status
-			# 		FROM members m
-			# 		JOIN clubs c ON c.id = m.entity_id
-			# 		WHERE m.account_id = $1
-			# 		  AND m.entity_type = 'club'
-			# 		ORDER BY m.joined_at DESC NULLS LAST
-			# 		""",
-			# 		account_id,
-			# 	)
+			club_rows = []
+			if account_id:
+				club_rows = await conn.fetch(
+					"""
+					SELECT m.id AS membership_id,
+						   m.role,
+						   m.status,
+						   m.joined_at,
+						   m.left_at,
+						   c.id AS club_id,
+						   c.name,
+						   c.description,
+						   c.tags,
+						   c.members_count,
+						   c.events_count,
+						   c.posts_count,
+						   c.banner_url,
+						   c.logo_url,
+						   c.contact_email,
+						   c.website_url,
+						   c.meeting_schedule,
+						   c.meeting_location,
+						   c.status AS club_status
+					FROM members m
+					JOIN clubs c ON c.id = m.entity_id
+					WHERE m.account_id = $1
+					  AND m.entity_type = 'club'
+					ORDER BY m.joined_at DESC NULLS LAST
+					""",
+					account_id,
+				)
 
-			# certificate_rows = await conn.fetch(
-			# 	"""
-			# 	SELECT sc.id,
-			# 		   sc.certificate_id,
-			# 		   sc.certificate_number,
-			# 		   sc.issued_date,
-			# 		   sc.expiry_date,
-			# 		   sc.certificate_file_url,
-			# 		   sc.verification_code,
-			# 		   sc.verification_url,
-			# 		   sc.final_score,
-			# 		   sc.completion_date,
-			# 		   sc.status,
-			# 		   sc.revocation_reason,
-			# 		   sc.revoked_at,
-			# 		   sc.created_at,
-			# 		   sc.updated_at,
-			# 		   c.name AS certificate_name,
-			# 		   c.description AS certificate_description,
-			# 		   c.issuing_organization,
-			# 		   c.certificate_type
-			# 	FROM student_certificates sc
-			# 	JOIN certificates c ON c.id = sc.certificate_id
-			# 	WHERE sc.user_id = $1
-			# 	ORDER BY sc.created_at DESC
-			# 	""",
-			# 	user_id,
-			# )
+			certificate_rows = await conn.fetch(
+				"""
+				SELECT sc.id,
+					   sc.certificate_id,
+					   sc.certificate_number,
+					   sc.issued_date,
+					   sc.expiry_date,
+					   sc.certificate_file_url,
+					   sc.verification_code,
+					   sc.verification_url,
+					   sc.final_score,
+					   sc.completion_date,
+					   sc.status,
+					   sc.revocation_reason,
+					   sc.revoked_at,
+					   sc.created_at,
+					   sc.updated_at,
+					   c.name AS certificate_name,
+					   c.description AS certificate_description,
+					   c.issuing_organization,
+					   c.certificate_type
+				FROM student_certificates sc
+				JOIN certificates c ON c.id = sc.certificate_id
+				WHERE sc.user_id = $1
+				ORDER BY sc.created_at DESC
+				""",
+				user_id,
+			)
 
 		payload = {
 			"user": _serialize(dict(user_row)),
-			# "academics": _serialize([dict(r) for r in academic_rows]),
-			# "skills": _serialize([dict(r) for r in skills]),
-			# "interests": _serialize([dict(r) for r in interests]),
-			# "scholarships": _serialize([dict(r) for r in scholarship_rows]),
-			# "saved_jobs": _serialize([dict(r) for r in saved_job_rows]),
-			# "clubs": _serialize([dict(r) for r in club_rows]),
-			# "certificates": _serialize([dict(r) for r in certificate_rows]),
-			# "counts": {
-			# 	# "academics": len(academic_rows),
-			# 	# "skills": len(skills),
-			# 	# "interests": len(interests),
-			# 	# "scholarships": len(scholarship_rows),
-			# 	# "saved_jobs": len(saved_job_rows),
-			# 	# "clubs": len(club_rows),
-			# 	# "certificates": len(certificate_rows),
-			# },
+			"academics": _serialize([dict(r) for r in academic_rows]),
+			"skills": _serialize([dict(r) for r in skills]),
+			"interests": _serialize([dict(r) for r in interests]),
+			"scholarships": _serialize([dict(r) for r in scholarship_rows]),
+			"saved_jobs": _serialize([dict(r) for r in saved_job_rows]),
+			"clubs": _serialize([dict(r) for r in club_rows]),
+			"certificates": _serialize([dict(r) for r in certificate_rows]),
+			"counts": {
+				"academics": len(academic_rows),
+				"skills": len(skills),
+				"interests": len(interests),
+				"scholarships": len(scholarship_rows),
+				"saved_jobs": len(saved_job_rows),
+				"clubs": len(club_rows),
+				"certificates": len(certificate_rows),
+			},
 		}
 
 		return json.dumps(payload, ensure_ascii=False)
