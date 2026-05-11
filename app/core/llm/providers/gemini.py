@@ -208,7 +208,7 @@ def build_gemini_chat_model(
     model: str | None = None,
     temperature: float = 0.1,
 ) -> RotatingGeminiChatModel:
-    keys = settings.GEMINI_API_KEYS
+    keys = settings.GEMINI_API_KEY.split(",") if settings.GEMINI_API_KEY else []
     if not keys:
         raise ValueError(
             "GEMINI_API_KEY is required when LLM_PROVIDER=gemini. "

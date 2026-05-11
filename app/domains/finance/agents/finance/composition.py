@@ -14,6 +14,7 @@ from app.domains.finance.agents.finance.six_jars.prompts_followups import (
 )
 from app.domains.finance.agents.finance.six_jars.prompts_agent import get_finance_system_prompt as _six_jars_system_prompt
 from app.domains.finance.agents.finance.six_jars.tools import ALL_SIX_JARS_TOOLS
+from app.config import settings
 
 
 def get_finance_tools(mode: str | None = None) -> list[Any]:

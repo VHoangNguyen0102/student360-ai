@@ -13,6 +13,8 @@ import structlog
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 
+# from app.domains.finance.agents.finance.react_loop import run_tool_calling_turn
+from app.domains.finance.agents.finance.scholarships.prompts import get_scholarship_system_prompt
 from app.domains.finance.agents.finance.react_loop import (
     run_tool_calling_turn,
     run_tool_calling_turn_stream,
@@ -43,6 +45,7 @@ _INTENT_TO_MODE: dict[str, str] = {
     "knowledge_6jars": "knowledge",
     "personal_finance": "personal",
     "hybrid": "hybrid",
+    "scholarships": "scholarships",
 }
 
 # Per-thread last-known intent for follow-up inheritance
@@ -52,7 +55,6 @@ _thread_last_intent: dict[str, str] = {}
 # will inherit the previous turn's intent if it was personal/hybrid
 _SHORT_FOLLOWUP_MAX_LEN = 40
 
-
 def _select_system_prompt(intent: str) -> str:
     """Return the appropriate system prompt based on classified intent."""
     if intent == "knowledge_6jars":
@@ -61,17 +63,19 @@ def _select_system_prompt(intent: str) -> str:
         return get_personal_system_prompt()
     if intent == "hybrid":
         return get_hybrid_system_prompt()
+    if intent == "scholarships":
+        return get_scholarship_system_prompt()
     return get_finance_system_prompt()
 
 
 async def _resolve_intent(message_text: str, thread_id: str) -> tuple[str, float, str]:
-    """Classify intent with short follow-up inheritance from previous turn."""
+    """Classify intent with short follow-up inheritance."""
     prev_intent = _thread_last_intent.get(thread_id)
 
     # For very short follow-ups after a personal/hybrid turn, inherit the previous intent
     # to avoid misclassifying "Còn lọ kia thì sao?" as knowledge_6jars
     if (
-        prev_intent in ("personal_finance", "hybrid")
+        prev_intent in ("personal_finance", "hybrid", "scholarships")
         and len(message_text.strip()) <= _SHORT_FOLLOWUP_MAX_LEN
     ):
         intent_result = await classify_intent(message_text)
@@ -137,7 +141,7 @@ class FinanceToolAgent:
             user_id=user_id,
         )
 
-        # ── Step 2: Select system prompt + tools via policy gate ─────────────
+
         system_prompt = _select_system_prompt(intent)
         tools = get_tools_for_intent(intent)
 
@@ -156,6 +160,7 @@ class FinanceToolAgent:
                 "user_id": user_id,
             }
         }
+        logger.info("tool_cfg", tool_cfg=tool_cfg)
         llm = get_llm()
 
         async def _run(hist: list[BaseMessage], tc: RunnableConfig) -> None:
