@@ -461,8 +461,6 @@ async def get_auto_transfers(config: RunnableConfig) -> str:
 # Exported registry (composed into finance agent via composition.py)
 # ─────────────────────────────────────────────────────────────
 
-from app.domains.finance.agents.finance.six_jars.tools.knowledge import get_financial_guidelines
-
 ALL_SIX_JARS_TOOLS = [
     get_jar_balance,
     get_jar_allocations,
@@ -476,5 +474,8 @@ ALL_SIX_JARS_TOOLS = [
     get_spending_trend,
     get_auto_transfers,
     can_afford_this,
-    get_financial_guidelines,
+    # get_financial_guidelines is intentionally excluded here —
+    # it lives in KNOWLEDGE_ONLY_TOOLS in policy_gate.py and is
+    # injected for all intents (including knowledge_6jars).
+    # Adding it here would cause duplicates for personal/hybrid intents.
 ]

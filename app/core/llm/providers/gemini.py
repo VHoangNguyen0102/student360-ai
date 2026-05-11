@@ -9,9 +9,10 @@ from langchain_core.callbacks.manager import (
     AsyncCallbackManagerForLLMRun,
     CallbackManagerForLLMRun,
 )
+from collections.abc import AsyncIterator
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import BaseMessage
-from langchain_core.outputs import ChatResult
+from langchain_core.outputs import ChatGenerationChunk, ChatResult
 from langchain_google_genai import ChatGoogleGenerativeAI
 from pydantic import ConfigDict, PrivateAttr
 
@@ -146,6 +147,39 @@ class RotatingGeminiChatModel(BaseChatModel):
         for model in self._models_from_current():
             try:
                 return await model._agenerate(messages, stop=stop, run_manager=run_manager, **kwargs)
+            except Exception as exc:
+                if _is_quota_error(exc):
+                    self._pool.rotate()
+                    last_exc = exc
+                    continue
+                raise
+        raise last_exc  # type: ignore[misc]
+
+    # ------------------------------------------------------------------
+    # Core generation — streaming
+    # ------------------------------------------------------------------
+
+    async def _astream(
+        self,
+        messages: list[BaseMessage],
+        stop: Optional[list[str]] = None,
+        run_manager: Optional[AsyncCallbackManagerForLLMRun] = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatGenerationChunk]:
+        """
+        Implementation of streaming that supports transparent API key rotation.
+        If a quota error occurs at the start of the stream, it rotates and retries.
+        Note: Rotation mid-stream (after some tokens yielded) is not supported
+        as it would lead to disjointed or duplicate responses.
+        """
+        last_exc: Exception | None = None
+        for model in self._models_from_current():
+            try:
+                async for chunk in model._astream(
+                    messages, stop=stop, run_manager=run_manager, **kwargs
+                ):
+                    yield chunk
+                return
             except Exception as exc:
                 if _is_quota_error(exc):
                     self._pool.rotate()
