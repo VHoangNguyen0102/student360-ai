@@ -459,7 +459,39 @@ async def chat_stream(
         "xóa giao dịch", "ghi chi", "ghi thu",
     ]
 
+    _action_detected = (
+        not req.enable_actions
+        and req.message
+        and any(kw in req.message.lower() for kw in _ACTION_KEYWORDS)
+    )
+
     async def event_generator():
+        # Short-circuit: action intent detected but mode is disabled
+        if _action_detected:
+            logger.info(
+                "chat_stream_action_blocked",
+                user_id=req.user_id,
+                session_id=session_id,
+                reason="enable_actions_disabled",
+            )
+            yield ServerSentEvent(
+                event="done",
+                data=json.dumps(
+                    {
+                        "sessionId": session_id,
+                        "intent": None,
+                        "answerMode": None,
+                        "agentUsed": [],
+                        "providerUsed": provider_used,
+                        "modelUsed": model_used,
+                        "actions": [],
+                        "actionHint": True,
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+            return
+
         full_reply_parts: list[str] = []
         try:
             with llm_provider_override(provider_used), llm_model_override(req.llm_model):
@@ -490,18 +522,11 @@ async def chat_stream(
                     user_id=req.user_id,
                 )
 
-            # Detect action intent when mode is disabled — hint the client to enable it
-            action_hint = False
-            if not req.enable_actions and req.message:
-                msg_lower = req.message.lower()
-                action_hint = any(kw in msg_lower for kw in _ACTION_KEYWORDS)
-
             logger.info(
                 "chat_stream_completed",
                 user_id=req.user_id,
                 session_id=session_id,
                 action_proposals_count=len(actions),
-                action_hint=action_hint,
             )
             yield ServerSentEvent(
                 event="done",
@@ -514,7 +539,7 @@ async def chat_stream(
                         "providerUsed": provider_used,
                         "modelUsed": model_used,
                         "actions": [p.model_dump() for p in actions],
-                        "actionHint": action_hint,
+                        "actionHint": False,
                     },
                     ensure_ascii=False,
                 ),
