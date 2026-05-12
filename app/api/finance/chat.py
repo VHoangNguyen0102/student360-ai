@@ -24,6 +24,7 @@ from langchain_core.messages import (
 
 from app.domains.finance.agents.finance.agent import get_finance_agent
 from app.domains.finance.agents.finance.action_extractor import ActionExtractor
+from app.domains.finance.agents.finance.action_intent_detector import ActionIntentDetector
 from app.core.llm.runtime_model import llm_model_override
 from app.core.llm.runtime_provider import llm_provider_override
 from app.config import settings
@@ -451,22 +452,15 @@ async def chat_stream(
         model_used=model_used,
     )
 
-    _ACTION_KEYWORDS = [
-        "ghi vào", "vừa chi", "vừa mua", "vừa ăn", "vừa uống", "vừa thanh toán",
-        "nhận lương", "nhận tiền", "có thu nhập", "chuyển từ lọ", "phân bổ",
-        "xóa lịch", "hủy lịch", "tạm dừng lịch", "bật lại lịch", "sửa lịch",
-        "tạo lịch", "mỗi tháng", "mỗi tuần", "tiết kiệm định kỳ",
-        "xóa giao dịch", "ghi chi", "ghi thu",
-    ]
-
-    _action_detected = (
-        not req.enable_actions
-        and req.message
-        and any(kw in req.message.lower() for kw in _ACTION_KEYWORDS)
-    )
-
     async def event_generator():
-        # Short-circuit: action intent detected but mode is disabled
+        # Short-circuit: action intent detected but actions mode is disabled
+        if not req.enable_actions and req.message:
+            _action_detected = await ActionIntentDetector(
+                provider=provider_used
+            ).detect(req.message, user_id=req.user_id)
+        else:
+            _action_detected = False
+
         if _action_detected:
             logger.info(
                 "chat_stream_action_blocked",
