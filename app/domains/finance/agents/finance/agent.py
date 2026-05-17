@@ -10,15 +10,17 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 import structlog
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 
 # from app.domains.finance.agents.finance.react_loop import run_tool_calling_turn
 from app.domains.finance.agents.finance.scholarships.prompts import get_scholarship_system_prompt
 from app.domains.finance.agents.finance.react_loop import (
+    _parse_action_response,
     run_tool_calling_turn,
     run_tool_calling_turn_stream,
 )
+from app.domains.finance.models.action_proposal import ActionProposal
 from app.domains.finance.agents.finance.six_jars.intent_classifier import classify_intent
 from app.domains.finance.agents.finance.six_jars.policy_gate import get_tools_for_intent
 from app.domains.finance.agents.finance.six_jars.prompts_agent import (
@@ -110,6 +112,7 @@ class FinanceToolAgent:
         input: dict[str, Any],
         config: RunnableConfig | None = None,
         history: list[BaseMessage] | None = None,
+        enable_actions: bool = False,
     ) -> dict[str, Any]:
         cfg = config or {}
         configurable = (cfg.get("configurable") or {}) if isinstance(cfg, dict) else {}
@@ -164,7 +167,7 @@ class FinanceToolAgent:
         llm = get_llm()
 
         async def _run(hist: list[BaseMessage], tc: RunnableConfig) -> None:
-            await run_tool_calling_turn(llm, tools, hist, tool_config=tc)
+            await run_tool_calling_turn(llm, tools, hist, tool_config=tc, enable_actions=enable_actions)
 
         tail = await run_finance_turn(
             thread_id,
@@ -183,10 +186,23 @@ class FinanceToolAgent:
             answer_mode=answer_mode,
         )
 
+        # Actions are embedded in the final AIMessage by run_tool_calling_turn
+        # (schema was pre-injected before the loop). Parse from session history.
+        actions: list[ActionProposal] = []
+        if enable_actions:
+            session_hist = _sessions.get(thread_id, [])
+            last_ai = next(
+                (m for m in reversed(session_hist) if isinstance(m, AIMessage)),
+                None,
+            )
+            if last_ai and last_ai.content:
+                _, actions = _parse_action_response(str(last_ai.content))
+
         return {
             "messages": tail,
             "intent": intent,
             "answer_mode": answer_mode,
+            "actions": actions,
         }
 
     async def astream(
@@ -194,6 +210,7 @@ class FinanceToolAgent:
         input: dict[str, Any],
         config: RunnableConfig | None = None,
         history: list[BaseMessage] | None = None,
+        enable_actions: bool = False,
     ) -> AsyncIterator[tuple[str, str]]:
         """Streaming variant — yields (event_type, data) tuples.
 
@@ -260,7 +277,7 @@ class FinanceToolAgent:
                 hist.append(m)
 
             async for event in run_tool_calling_turn_stream(
-                llm, tools, hist, tool_config=tool_cfg
+                llm, tools, hist, tool_config=tool_cfg, enable_actions=enable_actions
             ):
                 yield event
 

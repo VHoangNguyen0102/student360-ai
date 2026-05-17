@@ -21,6 +21,7 @@ from app.config import settings
 
 # Đóng connection pool DB khi app shutdown để tránh leak connection.
 from app.core.database import close_pool
+from app.core.llm.providers.vertexai import close_http_client
 
 # Logger theo chuẩn structured logging.
 import structlog
@@ -42,8 +43,9 @@ async def lifespan(app: FastAPI):
     )
     yield
 
-    # Shutdown: đóng DB pool để giải phóng tài nguyên.
+    # Shutdown: đóng DB pool và httpx client để giải phóng tài nguyên.
     await close_pool()
+    await close_http_client()
     logger.info("student360-ai shutting down")
 
 

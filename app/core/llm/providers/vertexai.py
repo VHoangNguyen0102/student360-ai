@@ -24,6 +24,27 @@ from app.config import settings
 
 logger = structlog.get_logger()
 
+# Shared httpx client — reused across all VertexAI calls to avoid repeated
+# TCP/TLS setup. Cleaned up in app lifespan (main.py).
+_shared_http_client: httpx.AsyncClient | None = None
+
+
+def _get_http_client(timeout_s: float = 120.0) -> httpx.AsyncClient:
+    global _shared_http_client
+    if _shared_http_client is None or _shared_http_client.is_closed:
+        _shared_http_client = httpx.AsyncClient(
+            timeout=timeout_s,
+            limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+        )
+    return _shared_http_client
+
+
+async def close_http_client() -> None:
+    global _shared_http_client
+    if _shared_http_client is not None and not _shared_http_client.is_closed:
+        await _shared_http_client.aclose()
+        _shared_http_client = None
+
 
 def _extract_json_objects(buffer: str) -> tuple[list[dict], str]:
     """Pull complete JSON objects out of a streaming JSON-array buffer."""
@@ -79,7 +100,7 @@ class VertexRestChatModel(BaseChatModel):
     model_name: str
     api_key: str
     temperature: float = 0.1
-    timeout_s: float = 60.0
+    timeout_s: float = 120.0
 
     @property
     def _llm_type(self) -> str:
@@ -119,24 +140,34 @@ class VertexRestChatModel(BaseChatModel):
 
     def _build_payload(self, messages: list[BaseMessage], **kwargs: Any) -> dict[str, Any]:
         contents: list[dict[str, Any]] = []
-        for msg in messages:
-            parts: list[dict[str, Any]] = []
-            
-            # Handle tool call results (ToolMessage)
+        i = 0
+        while i < len(messages):
+            msg = messages[i]
+
+            # Consecutive ToolMessages must be merged into a single "user" turn.
+            # VertexAI requires the number of functionResponse parts to exactly
+            # match the number of functionCall parts in the preceding model turn.
             if msg.type == "tool":
-                try:
-                    content_json = json.loads(msg.content)
-                except Exception:
-                    content_json = {"result": msg.content}
-                tool_name = getattr(msg, "name", None) or "unknown_tool"
-                parts.append({
-                    "functionResponse": {
-                        "name": tool_name,
-                        "response": content_json
-                    }
-                })
-            # Handle AI messages (with possible tool calls)
-            elif msg.type == "ai":
+                tool_parts: list[dict[str, Any]] = []
+                while i < len(messages) and messages[i].type == "tool":
+                    m = messages[i]
+                    try:
+                        content_json = json.loads(m.content)
+                    except Exception:
+                        content_json = {"result": m.content}
+                    tool_name = getattr(m, "name", None) or "unknown_tool"
+                    tool_parts.append({
+                        "functionResponse": {
+                            "name": tool_name,
+                            "response": content_json,
+                        }
+                    })
+                    i += 1
+                contents.append({"role": "user", "parts": tool_parts})
+                continue
+
+            parts: list[dict[str, Any]] = []
+            if msg.type == "ai":
                 if msg.content:
                     parts.append({"text": msg.content})
                 tcalls = getattr(msg, "tool_calls", [])
@@ -144,10 +175,9 @@ class VertexRestChatModel(BaseChatModel):
                     parts.append({
                         "functionCall": {
                             "name": tc["name"],
-                            "args": tc["args"]
+                            "args": tc["args"],
                         }
                     })
-            # Handle normal text messages (Human/System)
             else:
                 text = self._to_vertex_text(msg).strip()
                 if text:
@@ -158,7 +188,8 @@ class VertexRestChatModel(BaseChatModel):
                     "role": self._to_vertex_role(msg),
                     "parts": parts,
                 })
-        
+            i += 1
+
         payload: dict[str, Any] = {"contents": contents}
         
         # Add tools if bound
@@ -226,19 +257,28 @@ class VertexRestChatModel(BaseChatModel):
         run_manager: Any = None,
         **kwargs: Any,
     ) -> ChatResult:
+        """Non-streaming generate, implemented via streamGenerateContent.
+
+        Using the streaming endpoint avoids the hard 60-second server-side
+        timeout that generateContent imposes on complex tool-calling requests.
+        We collect all chunks then return them as a single ChatResult.
+        """
         _ = stop, run_manager
         payload = self._build_payload(messages, **kwargs)
-        async with httpx.AsyncClient(timeout=self.timeout_s) as client:
-            res = await client.post(self._url(stream=False), json=payload)
-        if res.status_code >= 400:
-            raise RuntimeError(
-                f"Vertex REST error {res.status_code}: {res.text}"
-            )
-        data = res.json()
-        chunks = data if isinstance(data, list) else [data]
+        buffer = ""
+        chunks: list[dict] = []
+        client = _get_http_client(self.timeout_s)
+        async with client.stream("POST", self._url(stream=True), json=payload) as response:
+            if response.status_code >= 400:
+                body = await response.aread()
+                raise RuntimeError(
+                    f"Vertex REST error {response.status_code}: {body.decode()}"
+                )
+            async for text_chunk in response.aiter_text():
+                buffer += text_chunk
+                new_objs, buffer = _extract_json_objects(buffer)
+                chunks.extend(new_objs)
 
-
-        import uuid
         msg = self._extract_ai_message(chunks)
         return ChatResult(generations=[ChatGeneration(message=msg)])
 
@@ -253,8 +293,8 @@ class VertexRestChatModel(BaseChatModel):
         stream_kwargs = {k: v for k, v in kwargs.items() if k != "tools"}
         payload = self._build_payload(messages, **stream_kwargs)
         buffer = ""
-        async with httpx.AsyncClient(timeout=self.timeout_s) as client:
-            async with client.stream("POST", self._url(stream=True), json=payload) as response:
+        client = _get_http_client(self.timeout_s)
+        async with client.stream("POST", self._url(stream=True), json=payload) as response:
                 if response.status_code >= 400:
                     body = await response.aread()
                     raise RuntimeError(

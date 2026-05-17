@@ -23,7 +23,7 @@ from langchain_core.messages import (
 )
 
 from app.domains.finance.agents.finance.agent import get_finance_agent
-from app.domains.finance.agents.finance.action_extractor import ActionExtractor
+from app.domains.finance.agents.finance.action_intent_detector import ActionIntentDetector
 from app.core.llm.runtime_model import llm_model_override
 from app.core.llm.runtime_provider import llm_provider_override
 from app.config import settings
@@ -267,6 +267,7 @@ async def chat(
                     },
                     config=config,
                     history=history_messages,
+                    enable_actions=req.enable_actions,
                 )
             break
         except Exception as exc:
@@ -379,14 +380,7 @@ async def chat(
     if not isinstance(agent_used, list) or not agent_used:
         agent_used = ["finance"]
 
-    # Extract action proposals if requested
-    actions: list[ActionProposal] = []
-    if req.enable_actions:
-        actions = await ActionExtractor().extract(
-            user_message=req.message,
-            ai_reply=reply,
-            user_id=req.user_id,
-        )
+    actions: list[ActionProposal] = result.get("actions") or []
 
     return ChatResponse(
         reply=reply,
@@ -451,22 +445,49 @@ async def chat_stream(
         model_used=model_used,
     )
 
-    _ACTION_KEYWORDS = [
-        "ghi vào", "vừa chi", "vừa mua", "vừa ăn", "vừa uống", "vừa thanh toán",
-        "nhận lương", "nhận tiền", "có thu nhập", "chuyển từ lọ", "phân bổ",
-        "xóa lịch", "hủy lịch", "tạm dừng lịch", "bật lại lịch", "sửa lịch",
-        "tạo lịch", "mỗi tháng", "mỗi tuần", "tiết kiệm định kỳ",
-        "xóa giao dịch", "ghi chi", "ghi thu",
-    ]
-
     async def event_generator():
+        # Short-circuit: action intent detected but actions mode is disabled
+        if not req.enable_actions and req.message:
+            _action_detected = await ActionIntentDetector(
+                provider=provider_used
+            ).detect(req.message, user_id=req.user_id)
+        else:
+            _action_detected = False
+
+        if _action_detected:
+            logger.info(
+                "chat_stream_action_blocked",
+                user_id=req.user_id,
+                session_id=session_id,
+                reason="enable_actions_disabled",
+            )
+            yield ServerSentEvent(
+                event="done",
+                data=json.dumps(
+                    {
+                        "sessionId": session_id,
+                        "intent": None,
+                        "answerMode": None,
+                        "agentUsed": [],
+                        "providerUsed": provider_used,
+                        "modelUsed": model_used,
+                        "actions": [],
+                        "actionHint": True,
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+            return
+
         full_reply_parts: list[str] = []
+        actions_from_agent: list[ActionProposal] = []
         try:
             with llm_provider_override(provider_used), llm_model_override(req.llm_model):
                 async for event_type, data in agent.astream(
                     {"messages": [HumanMessage(content=req.message)]},
                     config=config,
                     history=history_messages,
+                    enable_actions=req.enable_actions,
                 ):
                     if event_type == "status":
                         yield ServerSentEvent(
@@ -479,29 +500,20 @@ async def chat_stream(
                             event="token",
                             data=json.dumps({"text": data}, ensure_ascii=False),
                         )
+                    elif event_type == "actions":
+                        try:
+                            raw = json.loads(data)
+                            actions_from_agent = [ActionProposal(**a) for a in raw]
+                        except Exception:
+                            pass
 
-            # Extract action proposals if the client opted in
-            actions: list[ActionProposal] = []
-            if req.enable_actions and full_reply_parts:
-                full_reply = "".join(full_reply_parts)
-                actions = await ActionExtractor().extract(
-                    user_message=req.message,
-                    ai_reply=full_reply,
-                    user_id=req.user_id,
-                )
-
-            # Detect action intent when mode is disabled — hint the client to enable it
-            action_hint = False
-            if not req.enable_actions and req.message:
-                msg_lower = req.message.lower()
-                action_hint = any(kw in msg_lower for kw in _ACTION_KEYWORDS)
+            actions: list[ActionProposal] = actions_from_agent
 
             logger.info(
                 "chat_stream_completed",
                 user_id=req.user_id,
                 session_id=session_id,
                 action_proposals_count=len(actions),
-                action_hint=action_hint,
             )
             yield ServerSentEvent(
                 event="done",
@@ -514,7 +526,7 @@ async def chat_stream(
                         "providerUsed": provider_used,
                         "modelUsed": model_used,
                         "actions": [p.model_dump() for p in actions],
-                        "actionHint": action_hint,
+                        "actionHint": False,
                     },
                     ensure_ascii=False,
                 ),
