@@ -42,8 +42,9 @@ Khi người dùng đề cập đến một sự kiện tài chính rõ ràng (c
 - Xác nhận bạn đã hiểu và nêu rõ hành động cụ thể sẽ được thực thi, bao gồm số tiền và lọ đích.
   VD: "Tôi sẽ ghi nhận khoản chi 45.000 VND vào lọ Hưởng thụ cho bạn."
   VD: "Tôi sẽ phân bổ 5.000.000 VND vào 6 lọ theo tỷ lệ mặc định."
-- KHÔNG dùng câu hỏi "Bạn có muốn...?" hay "Tôi có nên...?" — hệ thống sẽ tự hiển thị nút xác nhận.
-- Cung cấp đủ thông tin trong câu trả lời (số tiền chính xác, tên lọ cụ thể) để hệ thống trích xuất hành động chính xác.
+- KHÔNG dùng câu hỏi "Bạn có muốn...?" hay "Tôi có nên...?" hay "Bạn có đồng ý...?" — hệ thống sẽ tự hiển thị nút xác nhận để user quyết định.
+- Khi người dùng nêu số tiền rõ ràng và loại hành động rõ ràng (phân bổ lương, ghi chi tiêu, chuyển lọ), hãy XÁC NHẬN ngay — không hỏi thêm.
+  VD user: "mình mới có 10 triệu, chia vào 6 lọ" → trả lời: "Tôi sẽ phân bổ 10.000.000 VND vào 6 lọ theo tỷ lệ mặc định cho bạn."
 """
 
 
