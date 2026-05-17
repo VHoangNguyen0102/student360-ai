@@ -1,5 +1,5 @@
 """Pydantic request/response models for chat endpoints."""
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 from enum import Enum
 
@@ -43,6 +43,38 @@ class ChatUsage(BaseModel):
     latency_ms: int
 
 
+class ScholarshipRequirements(BaseModel):
+    gpa: Optional[str] = None
+    language: Optional[str] = None
+    year_level: Optional[str] = None
+    other: list[str] = Field(default_factory=list)
+
+
+class ScholarshipRecommendationItem(BaseModel):
+    id: str
+    title: str
+    country: Optional[str] = None
+    university: Optional[str] = None
+    provider: Optional[str] = None
+    category: Optional[str] = None
+    majors: list[str] = Field(default_factory=list)
+    coverage: Optional[str] = None
+    important_requirement: Optional[str] = None
+    requirements: ScholarshipRequirements = Field(default_factory=ScholarshipRequirements)
+    benefits: list[str] = Field(default_factory=list)
+    deadline: Optional[str] = None
+    target_audience: list[str] = Field(default_factory=list)
+    match_reason: Optional[str] = None
+    match_level: str
+    match_score: Optional[float] = None
+
+
+class ScholarshipRecommendations(BaseModel):
+    kind: str = "scholarship_recommendations"
+    basis: str = "profile_match"
+    items: list[ScholarshipRecommendationItem] = Field(default_factory=list)
+
+
 class ChatResponse(BaseModel):
     reply: str
     session_id: str
@@ -54,4 +86,5 @@ class ChatResponse(BaseModel):
     provider_used: Optional[str] = None
     model_used: Optional[str] = None
     actions: Optional[list[ActionProposal]] = None
+    scholarship_recommendations: Optional[ScholarshipRecommendations] = None
 

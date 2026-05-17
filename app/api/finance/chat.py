@@ -27,7 +27,13 @@ from app.domains.finance.agents.finance.action_extractor import ActionExtractor
 from app.core.llm.runtime_model import llm_model_override
 from app.core.llm.runtime_provider import llm_provider_override
 from app.config import settings
-from app.domains.finance.models.chat import ChatRequest, ChatResponse, ChatUsage
+from app.core.chat_session_store import _sessions
+from app.domains.finance.models.chat import (
+    ChatRequest,
+    ChatResponse,
+    ChatUsage,
+    ScholarshipRecommendations,
+)
 from app.domains.finance.models.action_proposal import ActionProposal
 from app.utils.auth import verify_service_token
 
@@ -139,6 +145,51 @@ def _tool_call_name(tool_call: object) -> str | None:
     return None
 
 
+def _extract_scholarship_recommendations(messages: list) -> ScholarshipRecommendations | None:
+    for msg in reversed(messages):
+        if getattr(msg, "type", None) != "tool":
+            continue
+        data = _extract_json_obj(getattr(msg, "content", None))
+        if not data:
+            continue
+        raw = data.get("scholarship_recommendations")
+        if not isinstance(raw, dict):
+            continue
+        items = raw.get("items")
+        if not isinstance(items, list) or not items:
+            continue
+        try:
+            return ScholarshipRecommendations.model_validate(
+                {
+                    "kind": raw.get("kind") or "scholarship_recommendations",
+                    "basis": raw.get("basis") or "profile_match",
+                    "items": items[:8],
+                }
+            )
+        except Exception:
+            logger.warning("invalid_scholarship_recommendations_payload")
+            return None
+    return None
+
+
+def _extract_reply_hint_from_tools(messages: list) -> str | None:
+    for msg in reversed(messages):
+        if getattr(msg, "type", None) != "tool":
+            continue
+        data = _extract_json_obj(getattr(msg, "content", None))
+        if not data:
+            continue
+        hint = data.get("reply_hint")
+        if isinstance(hint, str) and hint.strip():
+            return hint.strip()
+    return None
+
+
+def _looks_like_raw_json(text: str) -> bool:
+    stripped = (text or "").strip()
+    return stripped.startswith("{") and stripped.endswith("}")
+
+
 def _synthesise_reply_from_tools(messages: list) -> str | None:
     """Fallback when the final AI message is empty.
 
@@ -167,6 +218,9 @@ def _synthesise_reply_from_tools(messages: list) -> str | None:
 
     if isinstance(data.get("error"), str) and data.get("error"):
         return data["error"]
+
+    if isinstance(data.get("scholarship_recommendations"), dict):
+        return data.get("reply_hint") or "Tôi đã tìm thấy một số học bổng phù hợp với bạn. Nhấn vào từng thẻ để xem tóm tắt."
 
     jar_code = data.get("jar_code")
     jar_name = data.get("name")
@@ -364,6 +418,13 @@ async def chat(
             or "Xin lỗi, tôi chưa thể tổng hợp kết quả. Vui lòng thử lại."
         )
 
+    scholarship_recommendations = _extract_scholarship_recommendations(messages)
+    if scholarship_recommendations and (_looks_like_raw_json(reply) or len(reply.strip()) > 360):
+        reply = (
+            _extract_reply_hint_from_tools(messages)
+            or "Tôi đã tìm thấy một số học bổng phù hợp với bạn. Nhấn vào từng thẻ để xem tóm tắt."
+        )
+
     # Extract token usage from the last AI message if available
     usage_meta = getattr(messages[-1], "usage_metadata", None)
     usage = None
@@ -398,6 +459,7 @@ async def chat(
         provider_used=provider_used,
         model_used=model_used,
         actions=actions,
+        scholarship_recommendations=scholarship_recommendations,
     )
 
 
@@ -418,7 +480,7 @@ async def chat_stream(
     agent = get_finance_agent()
 
     # Determine provider
-    provider_used = req.llm_provider or settings.LLM_PROVIDER
+    provider_used = req.llm_provider.value if req.llm_provider else settings.LLM_PROVIDER
     if provider_used not in {"vertexai", "gemini", "ollama"}:
         provider_used = "vertexai"  # Default fallback for streaming
 
@@ -480,6 +542,9 @@ async def chat_stream(
                             data=json.dumps({"text": data}, ensure_ascii=False),
                         )
 
+            session_messages = _sessions.get(session_id, [])
+            scholarship_recommendations = _extract_scholarship_recommendations(session_messages)
+
             # Extract action proposals if the client opted in
             actions: list[ActionProposal] = []
             if req.enable_actions and full_reply_parts:
@@ -515,6 +580,11 @@ async def chat_stream(
                         "modelUsed": model_used,
                         "actions": [p.model_dump() for p in actions],
                         "actionHint": action_hint,
+                        "scholarshipRecommendations": (
+                            scholarship_recommendations.model_dump()
+                            if scholarship_recommendations
+                            else None
+                        ),
                     },
                     ensure_ascii=False,
                 ),

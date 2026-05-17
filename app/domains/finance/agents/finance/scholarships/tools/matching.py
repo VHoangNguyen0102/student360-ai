@@ -57,6 +57,55 @@ def _ensure_uuid_list(value: Any) -> list[str]:
 	return []
 
 
+_VIETNAMESE_COUNT_WORDS = {
+	"mot": 1,
+	"một": 1,
+	"hai": 2,
+	"ba": 3,
+	"bon": 4,
+	"bốn": 4,
+	"tu": 4,
+	"tư": 4,
+	"nam": 5,
+	"năm": 5,
+	"sau": 6,
+	"sáu": 6,
+	"bay": 7,
+	"bảy": 7,
+	"tam": 8,
+	"tám": 8,
+}
+
+
+def _normalize_text_for_count(text: str) -> str:
+	normalized = unicodedata.normalize("NFD", text.lower())
+	return "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn")
+
+
+def _extract_requested_recommendation_count(user_query: str) -> int | None:
+	"""Infer an explicit requested recommendation count from a chat query."""
+	normalized = _normalize_text_for_count(user_query or "")
+	if not normalized.strip():
+		return None
+
+	# "mot so hoc bong" / "1 so hoc bong" means "some scholarships", not exactly one.
+	without_some_phrase = re.sub(r"\b(?:mot|1)\s+so\b", " ", normalized)
+	patterns = [
+		r"\b(?:top|lay|chon|goi y|de xuat|tim|cho toi|cho minh)\s+(\d{1,2})\b",
+		r"\b(\d{1,2})\s+(?:hoc bong|suat|recommendation|recommendations|ket qua)\b",
+	]
+	for pattern in patterns:
+		match = re.search(pattern, without_some_phrase)
+		if match:
+			return int(match.group(1))
+
+	for word, value in _VIETNAMESE_COUNT_WORDS.items():
+		if re.search(rf"\b{re.escape(word)}\s+(?:hoc bong|suat|ket qua)\b", without_some_phrase):
+			return value
+
+	return None
+
+
 def _build_scholarship_detail_response(
 	scholarship_data: dict[str, Any],
 	requirement_items: list[dict[str, Any]],
@@ -683,6 +732,623 @@ def _score_profile_match(profile: dict[str, Any], row: dict[str, Any]) -> tuple[
     return round(max(0.0, min(score, 1.0)), 6), matched_terms
 
 
+def _as_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return []
+        try:
+            parsed = json.loads(stripped)
+            if isinstance(parsed, list):
+                return [str(item).strip() for item in parsed if str(item).strip()]
+        except json.JSONDecodeError:
+            pass
+        return [item.strip() for item in re.split(r"[,;\n]", stripped) if item.strip()]
+    return []
+
+
+def _first_text(*values: Any) -> str | None:
+    for value in values:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if value is not None and not isinstance(value, (list, tuple, dict)):
+            text = str(value).strip()
+            if text:
+                return text
+    return None
+
+
+def _shorten(text: str | None, limit: int = 120) -> str | None:
+    if not text:
+        return None
+    compact = re.sub(r"\s+", " ", text).strip()
+    if len(compact) <= limit:
+        return compact
+    return compact[: limit - 3].rstrip() + "..."
+
+
+def _extract_query_profile(user_query: str) -> dict[str, Any]:
+    text = user_query or ""
+    profile: dict[str, Any] = {}
+    gpa_match = re.search(r"\bgpa\s*(?:>=|>|:|is|la|là)?\s*([0-9]+(?:[.,][0-9]+)?)", text, re.I)
+    if gpa_match:
+        try:
+            profile["gpa"] = float(gpa_match.group(1).replace(",", "."))
+        except ValueError:
+            pass
+
+    major_patterns = [
+        r"\b(computer science|software engineering|information technology|data science|artificial intelligence|ai|stem)\b",
+        r"\b(khoa hoc may tinh|khoa học máy tính|cong nghe thong tin|công nghệ thông tin)\b",
+    ]
+    majors: list[str] = []
+    for pattern in major_patterns:
+        majors.extend(match.group(1) for match in re.finditer(pattern, text, re.I))
+    if majors:
+        profile["major"] = " ".join(dict.fromkeys(majors))
+
+    field_patterns = {
+        "major": r"(?:ngành|major)\s+(.+?)(?=\s+(?:khoa|trường|university|school|gpa|yêu cầu|yeu cau)\b|[,.;]|$)",
+        "faculty": r"(?:khoa|faculty)\s+(.+?)(?=\s+(?:ngành|major|trường|university|school|gpa|yêu cầu|yeu cau)\b|[,.;]|$)",
+        "university": r"(?:trường|university|school)\s+(.+?)(?=\s+(?:ngành|major|khoa|faculty|gpa|yêu cầu|yeu cau)\b|[,.;]|$)",
+    }
+    for key, pattern in field_patterns.items():
+        match = re.search(pattern, text, re.I)
+        if match:
+            profile[key] = match.group(1).strip()
+    return profile
+
+
+def _build_profile_summary(profile_payload: dict[str, Any], user_query: str) -> dict[str, Any]:
+    academics = profile_payload.get("academics") if isinstance(profile_payload.get("academics"), list) else []
+    latest_academic = academics[0] if academics and isinstance(academics[0], dict) else {}
+    skills = profile_payload.get("skills") if isinstance(profile_payload.get("skills"), list) else []
+    interests = profile_payload.get("interests") if isinstance(profile_payload.get("interests"), list) else []
+    user = profile_payload.get("user") if isinstance(profile_payload.get("user"), dict) else {}
+    query_profile = _extract_query_profile(user_query)
+
+    summary = {
+        "major": query_profile.get("major") or latest_academic.get("major"),
+        "university": latest_academic.get("university"),
+        "faculty": latest_academic.get("faculty"),
+        "program": latest_academic.get("education_program"),
+        "degree_level": latest_academic.get("degree_level"),
+        "current_year": latest_academic.get("current_year"),
+        "gpa": query_profile.get("gpa") or latest_academic.get("gpa"),
+        "skills": [item.get("name") for item in skills if isinstance(item, dict) and item.get("name")],
+        "interests": [item.get("name") for item in interests if isinstance(item, dict) and item.get("name")],
+        "career_goal": user.get("career_goal"),
+        "country": user.get("country"),
+        "keywords": user_query,
+    }
+    return {key: value for key, value in summary.items() if value not in (None, "", [])}
+
+
+def _format_profile_field(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text if text else None
+
+
+def _build_recommendation_reply_hint(profile: dict[str, Any], has_items: bool) -> str:
+    if not has_items:
+        return "Tôi chưa tìm thấy học bổng phù hợp từ dữ liệu hiện tại."
+
+    details: list[str] = []
+    major = _format_profile_field(profile.get("major"))
+    faculty = _format_profile_field(profile.get("faculty"))
+    university = _format_profile_field(profile.get("university"))
+    gpa = _format_profile_field(profile.get("gpa"))
+
+    if major:
+        details.append(f"ngành {major}")
+    if faculty:
+        details.append(f"khoa {faculty}")
+    if university:
+        details.append(f"trường {university}")
+    if gpa:
+        details.append(f"GPA {gpa}")
+
+    if details:
+        return (
+            f"Dựa trên profile của bạn ({', '.join(details)}), "
+            "tôi đề xuất các học bổng phù hợp dưới đây. Nhấn vào từng thẻ để xem tóm tắt."
+        )
+
+    return "Tôi đã tìm thấy một số học bổng phù hợp với bạn. Nhấn vào từng thẻ để xem tóm tắt."
+
+
+def _build_described_profile_reply_hint(profile: dict[str, Any], has_items: bool) -> str:
+    if not has_items:
+        return "Tôi chưa tìm thấy học bổng phù hợp với hồ sơ được mô tả."
+
+    details: list[str] = []
+    major = _format_profile_field(profile.get("major"))
+    faculty = _format_profile_field(profile.get("faculty"))
+    university = _format_profile_field(profile.get("university") or profile.get("school"))
+    gpa = _format_profile_field(profile.get("gpa"))
+
+    if major:
+        details.append(f"ngành {major}")
+    if faculty:
+        details.append(f"khoa {faculty}")
+    if university:
+        details.append(f"trường {university}")
+    if gpa:
+        details.append(f"GPA {gpa}")
+
+    if details:
+        return (
+            f"Dựa trên hồ sơ bạn mô tả ({', '.join(details)}), "
+            "tôi đề xuất các học bổng phù hợp dưới đây. Nhấn vào từng thẻ để xem tóm tắt."
+        )
+
+    return "Dựa trên thông tin bạn mô tả, tôi đề xuất các học bổng phù hợp dưới đây. Nhấn vào từng thẻ để xem tóm tắt."
+
+
+def _build_latest_reply_hint(has_items: bool) -> str:
+    if not has_items:
+        return "Tôi chưa tìm thấy học bổng mới nhất từ dữ liệu hiện tại."
+    return "Tôi đã tìm thấy các học bổng mới cập nhật gần đây. Nhấn vào từng thẻ để xem tóm tắt."
+
+
+def _extract_scholarship_search_criteria(user_query: str) -> dict[str, Any]:
+    text = user_query or ""
+    normalized = _normalize_text_for_count(text)
+    profile_bits = _extract_query_profile(text)
+    criteria: dict[str, Any] = {
+        "major": profile_bits.get("major"),
+        "university": profile_bits.get("university") or profile_bits.get("school"),
+        "faculty": profile_bits.get("faculty"),
+        "gpa": profile_bits.get("gpa"),
+        "sort": "relevance",
+        "requirement_complexity": None,
+        "gpa_preference": None,
+        "keywords": text,
+    }
+
+    if any(term in normalized for term in ["moi nhat", "gan day", "cap nhat", "latest", "recent"]):
+        criteria["sort"] = "latest"
+    if any(term in normalized for term in ["sap het han", "gan het han", "deadline gan", "deadline som"]):
+        criteria["sort"] = "deadline"
+    if any(term in normalized for term in ["yeu cau don gian", "de nop", "it yeu cau", "don gian"]):
+        criteria["requirement_complexity"] = "simple"
+    if any(term in normalized for term in ["yeu cau phuc tap", "nhieu yeu cau", "kho nop", "phuc tap"]):
+        criteria["requirement_complexity"] = "complex"
+    if any(term in normalized for term in ["gpa thap", "diem thap", "gpa khong cao"]):
+        criteria["gpa_preference"] = "low"
+    if any(term in normalized for term in ["gpa cao", "diem cao"]):
+        criteria["gpa_preference"] = "high"
+
+    subject_aliases = [
+        ("IT", [" it ", "cong nghe thong tin", "information technology"]),
+        ("Computer Science", ["computer science", "khoa hoc may tinh"]),
+        ("Marketing", ["marketing"]),
+        ("Business", ["business", "kinh doanh"]),
+        ("AI", [" ai ", "artificial intelligence", "tri tue nhan tao"]),
+    ]
+    padded = f" {normalized} "
+    if not criteria.get("major"):
+        for label, aliases in subject_aliases:
+            if any(alias in padded for alias in aliases):
+                criteria["major"] = label
+                break
+
+    university_match = re.search(r"\b([A-Z][A-Z0-9]{2,10})\b", text)
+    if university_match and not criteria.get("university"):
+        criteria["university"] = university_match.group(1)
+
+    return {key: value for key, value in criteria.items() if value not in (None, "", [])}
+
+
+def _criteria_label(criteria: dict[str, Any]) -> str:
+    labels: list[str] = []
+    if criteria.get("sort") == "latest":
+        labels.append("mới cập nhật gần đây")
+    elif criteria.get("sort") == "deadline":
+        labels.append("gần hạn nộp")
+    if criteria.get("major"):
+        labels.append(f"ngành {criteria['major']}")
+    if criteria.get("university"):
+        labels.append(f"trường {criteria['university']}")
+    if criteria.get("gpa"):
+        labels.append(f"GPA {criteria['gpa']}")
+    if criteria.get("gpa_preference") == "low":
+        labels.append("yêu cầu GPA thấp")
+    if criteria.get("gpa_preference") == "high":
+        labels.append("yêu cầu GPA cao")
+    if criteria.get("requirement_complexity") == "simple":
+        labels.append("yêu cầu đơn giản")
+    if criteria.get("requirement_complexity") == "complex":
+        labels.append("yêu cầu phức tạp")
+    return ", ".join(labels)
+
+
+def _build_criteria_reply_hint(criteria: dict[str, Any], has_items: bool) -> str:
+    if not has_items:
+        return "Tôi chưa tìm thấy học bổng phù hợp với tiêu chí bạn đưa ra."
+    label = _criteria_label(criteria)
+    if label:
+        return f"Tôi đã tìm thấy các học bổng theo tiêu chí {label}. Nhấn vào từng thẻ để xem tóm tắt."
+    return "Tôi đã tìm thấy một số học bổng theo tiêu chí bạn yêu cầu. Nhấn vào từng thẻ để xem tóm tắt."
+
+
+def _match_level(score: float) -> str:
+    if score >= 0.7:
+        return "high"
+    if score >= 0.45:
+        return "medium"
+    return "low"
+
+
+def _coverage_text(row: dict[str, Any]) -> str | None:
+    amount = row.get("amount")
+    currency = row.get("currency")
+    if amount is not None and currency:
+        try:
+            amount_text = f"{float(amount):,.0f}".replace(",", ".")
+        except (TypeError, ValueError):
+            amount_text = str(amount)
+        return f"{amount_text} {currency}"
+    benefits = _shorten(row.get("benefits"), 80)
+    if benefits:
+        return benefits
+    return _shorten(row.get("category_name"), 80)
+
+
+def _requirement_summary(
+    row: dict[str, Any],
+    requirement_items: list[dict[str, Any]],
+) -> tuple[dict[str, Any], str | None]:
+    requirements: dict[str, Any] = {"gpa": None, "language": None, "year_level": None, "other": []}
+    minimum_gpa = row.get("minimum_gpa")
+    if minimum_gpa is not None:
+        scale = row.get("minimum_gpa_scale") or 4
+        requirements["gpa"] = f"GPA >= {minimum_gpa}/{scale}"
+
+    for item in requirement_items:
+        title = str(item.get("title") or "")
+        description = str(item.get("description") or "")
+        text = " ".join(part for part in [title, description] if part).strip()
+        text_lower = text.lower()
+        if not text:
+            continue
+        if requirements["language"] is None and any(k in text_lower for k in ["ielts", "toeic", "toefl", "language"]):
+            requirements["language"] = _shorten(text, 80)
+        elif requirements["year_level"] is None and any(k in text_lower for k in ["year", "nam", "năm", "semester"]):
+            requirements["year_level"] = _shorten(text, 80)
+        elif len(requirements["other"]) < 3:
+            requirements["other"].append(_shorten(text, 80))
+
+    important = requirements["gpa"] or requirements["language"] or requirements["year_level"]
+    if not important and requirements["other"]:
+        important = requirements["other"][0]
+    return requirements, important
+
+
+def _benefit_list(row: dict[str, Any]) -> list[str]:
+    values = _as_list(row.get("benefits"))
+    if values:
+        return [_shorten(value, 80) for value in values[:4] if _shorten(value, 80)]
+    coverage = _coverage_text(row)
+    return [coverage] if coverage else []
+
+
+def _target_audience(row: dict[str, Any]) -> list[str]:
+    audience: list[str] = []
+    level = _first_text(row.get("level"))
+    if level:
+        audience.append(level)
+    universities = _as_list(row.get("target_universities"))
+    audience.extend(universities[:2])
+    return audience[:4]
+
+
+def _recommendation_reason(
+    row: dict[str, Any],
+    profile: dict[str, Any],
+    matched_terms: list[str],
+) -> str:
+    major = _first_text(profile.get("major"))
+    provider = _first_text(row.get("provider"), row.get("category_name"))
+    if matched_terms:
+        return f"Phù hợp với các thông tin trong hồ sơ của bạn: {', '.join(matched_terms[:3])}."
+    if major:
+        return f"Phù hợp với nền tảng/ngành học {major} của bạn."
+    if provider:
+        return f"Là học bổng từ {provider} có liên quan đến hồ sơ của bạn."
+    return "Đây là học bổng gần phù hợp nhất trong dữ liệu hiện có."
+
+
+def _build_recommendation_item(
+    row: dict[str, Any],
+    profile: dict[str, Any],
+    requirement_items: list[dict[str, Any]],
+    score: float,
+    matched_terms: list[str],
+) -> dict[str, Any]:
+    requirements, important_requirement = _requirement_summary(row, requirement_items)
+    target_universities = _as_list(row.get("target_universities"))
+    return {
+        "id": str(row.get("id")),
+        "title": _first_text(row.get("name")) or "Học bổng",
+        "country": None,
+        "university": target_universities[0] if target_universities else None,
+        "provider": _first_text(row.get("provider")),
+        "category": _first_text(row.get("category_name")),
+        "majors": _as_list(row.get("target_majors")),
+        "coverage": _coverage_text(row),
+        "important_requirement": important_requirement,
+        "requirements": requirements,
+        "benefits": _benefit_list(row),
+        "deadline": _serialize(row.get("application_deadline")),
+        "target_audience": _target_audience(row),
+        "match_reason": _recommendation_reason(row, profile, matched_terms),
+        "match_level": _match_level(score),
+        "match_score": round(score, 3),
+    }
+
+
+async def _fetch_recommendation_sources(
+    active_only: bool,
+    open_only: bool,
+    now: datetime,
+) -> tuple[list[Any], dict[str, list[dict[str, Any]]]]:
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        scholarship_rows = await conn.fetch(
+            """
+            SELECT s.id,
+                   s.name,
+                   s.description,
+                   s.eligibility_criteria,
+                   s.benefits,
+                   s.provider,
+                   s.target_majors,
+                   s.target_universities,
+                   s.minimum_gpa,
+                   s.minimum_gpa_scale,
+                   s.amount,
+                   s.currency,
+                   s.level,
+                   s.is_active,
+                   s.application_deadline,
+                   s.result_announcement_date,
+                   s.updated_at,
+                   sc.name AS category_name
+            FROM scholarships s
+            LEFT JOIN scholarship_categories sc ON sc.id = s.category_id
+            WHERE ($1::boolean = false OR s.is_active = true)
+              AND ($2::boolean = false OR (s.is_active = true AND (s.application_deadline IS NULL OR s.application_deadline >= $3)))
+            ORDER BY s.updated_at DESC NULLS LAST
+            LIMIT 300
+            """,
+            active_only,
+            open_only,
+            now,
+        )
+
+        scholarship_ids = [row["id"] for row in scholarship_rows if row.get("id")]
+        requirement_map: dict[str, list[dict[str, Any]]] = {}
+        if scholarship_ids:
+            requirement_rows = await conn.fetch(
+                """
+                SELECT scholarship_id,
+                       title,
+                       description,
+                       is_required,
+                       sort_order
+                FROM scholarship_requirements
+                WHERE scholarship_id = ANY($1::uuid[])
+                ORDER BY is_required DESC, sort_order ASC
+                """,
+                scholarship_ids,
+            )
+            for item in requirement_rows:
+                item_dict = dict(item)
+                requirement_map.setdefault(str(item_dict.get("scholarship_id")), []).append(item_dict)
+
+    return list(scholarship_rows), requirement_map
+
+
+def _rank_recommendation_items(
+    scholarship_rows: list[Any],
+    requirement_map: dict[str, list[dict[str, Any]]],
+    profile: dict[str, Any],
+    safe_limit: int,
+    now: datetime,
+) -> list[dict[str, Any]]:
+    ranked: list[dict[str, Any]] = []
+    for row in scholarship_rows:
+        row_dict = dict(row)
+        score, matched_terms = _score_profile_match(profile, row_dict)
+
+        profile_major_tokens = set(_tokenize(str(profile.get("major") or "")))
+        target_major_tokens = set(_tokenize(" ".join(_as_list(row_dict.get("target_majors")))))
+        if profile_major_tokens and target_major_tokens and profile_major_tokens & target_major_tokens:
+            score = min(1.0, score + 0.25)
+
+        profile_gpa = profile.get("gpa")
+        minimum_gpa = row_dict.get("minimum_gpa")
+        try:
+            if profile_gpa is not None and minimum_gpa is not None:
+                if float(profile_gpa) >= float(minimum_gpa):
+                    score = min(1.0, score + 0.15)
+                else:
+                    score = max(0.0, score - 0.15)
+        except (TypeError, ValueError):
+            pass
+
+        deadline = row_dict.get("application_deadline")
+        is_open = bool(row_dict.get("is_active") and (deadline is None or deadline >= now))
+        if is_open:
+            score = min(1.0, score + 0.05)
+
+        sid = str(row_dict.get("id"))
+        ranked.append(
+            {
+                "score": round(score, 6),
+                "is_open": is_open,
+                "item": _build_recommendation_item(
+                    row_dict,
+                    profile,
+                    requirement_map.get(sid, []),
+                    score,
+                    matched_terms,
+                ),
+            }
+        )
+
+    ranked.sort(key=lambda value: (value["score"], value["is_open"]), reverse=True)
+    return [entry["item"] for entry in ranked[:safe_limit]]
+
+
+def _build_latest_items(
+    scholarship_rows: list[Any],
+    requirement_map: dict[str, list[dict[str, Any]]],
+    safe_limit: int,
+) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for row in scholarship_rows[:safe_limit]:
+        row_dict = dict(row)
+        sid = str(row_dict.get("id"))
+        item = _build_recommendation_item(row_dict, {}, requirement_map.get(sid, []), 0.45, [])
+        item["match_reason"] = "Học bổng được cập nhật gần đây."
+        item["match_level"] = "medium"
+        item["match_score"] = None
+        items.append(item)
+    return items
+
+
+def _criteria_score(
+    row: dict[str, Any],
+    requirement_items: list[dict[str, Any]],
+    criteria: dict[str, Any],
+    now: datetime,
+) -> tuple[float, list[str]]:
+    score = 0.0
+    matched: list[str] = []
+    haystack = " ".join(
+        str(part or "")
+        for part in [
+            row.get("name"),
+            row.get("description"),
+            row.get("eligibility_criteria"),
+            row.get("benefits"),
+            row.get("provider"),
+            row.get("category_name"),
+            " ".join(_as_list(row.get("target_majors"))),
+            " ".join(_as_list(row.get("target_universities"))),
+        ]
+    )
+    haystack_tokens = set(_tokenize(haystack))
+
+    major = criteria.get("major")
+    if major:
+        major_tokens = set(_tokenize(str(major)))
+        if major_tokens and major_tokens & haystack_tokens:
+            score += 0.35
+            matched.append(f"ngành {major}")
+
+    university = criteria.get("university")
+    if university:
+        university_tokens = set(_tokenize(str(university)))
+        if university_tokens and university_tokens & haystack_tokens:
+            score += 0.25
+            matched.append(f"trường {university}")
+
+    gpa = criteria.get("gpa")
+    minimum_gpa = row.get("minimum_gpa")
+    try:
+        if gpa is not None and minimum_gpa is not None:
+            if float(gpa) >= float(minimum_gpa):
+                score += 0.2
+                matched.append(f"GPA đáp ứng yêu cầu {minimum_gpa}")
+            else:
+                score -= 0.2
+    except (TypeError, ValueError):
+        pass
+
+    gpa_preference = criteria.get("gpa_preference")
+    try:
+        min_gpa_value = float(minimum_gpa) if minimum_gpa is not None else None
+        if gpa_preference == "low" and (min_gpa_value is None or min_gpa_value <= 3.0):
+            score += 0.2
+            matched.append("yêu cầu GPA thấp")
+        if gpa_preference == "high" and min_gpa_value is not None and min_gpa_value >= 3.4:
+            score += 0.2
+            matched.append("yêu cầu GPA cao")
+    except (TypeError, ValueError):
+        pass
+
+    required_count = sum(1 for item in requirement_items if item.get("is_required"))
+    total_requirement_count = len(requirement_items)
+    complexity = criteria.get("requirement_complexity")
+    if complexity == "simple" and total_requirement_count <= 3:
+        score += 0.2
+        matched.append("yêu cầu đơn giản")
+    if complexity == "complex" and (required_count >= 3 or total_requirement_count >= 5):
+        score += 0.2
+        matched.append("yêu cầu phức tạp")
+
+    deadline = row.get("application_deadline")
+    is_open = bool(row.get("is_active") and (deadline is None or deadline >= now))
+    if is_open:
+        score += 0.05
+
+    return round(max(0.0, min(score, 1.0)), 6), matched
+
+
+def _criteria_reason(criteria: dict[str, Any], matched_terms: list[str]) -> str:
+    if matched_terms:
+        return f"Phù hợp với tiêu chí: {', '.join(matched_terms[:4])}."
+    if criteria.get("sort") == "latest":
+        return "Học bổng được cập nhật gần đây."
+    if criteria.get("sort") == "deadline":
+        return "Học bổng có hạn nộp gần."
+    return "Phù hợp gần nhất với tiêu chí tìm kiếm."
+
+
+def _rank_criteria_items(
+    scholarship_rows: list[Any],
+    requirement_map: dict[str, list[dict[str, Any]]],
+    criteria: dict[str, Any],
+    safe_limit: int,
+    now: datetime,
+) -> list[dict[str, Any]]:
+    ranked: list[dict[str, Any]] = []
+    for row in scholarship_rows:
+        row_dict = dict(row)
+        sid = str(row_dict.get("id"))
+        requirements = requirement_map.get(sid, [])
+        score, matched_terms = _criteria_score(row_dict, requirements, criteria, now)
+        item = _build_recommendation_item(row_dict, {}, requirements, score, [])
+        item["match_reason"] = _criteria_reason(criteria, matched_terms)
+        item["match_score"] = round(score, 3)
+        ranked.append(
+            {
+                "score": score,
+                "updated_at": row_dict.get("updated_at") or datetime.min,
+                "deadline": row_dict.get("application_deadline") or datetime.max,
+                "item": item,
+            }
+        )
+
+    if criteria.get("sort") == "latest":
+        ranked.sort(key=lambda value: value["updated_at"], reverse=True)
+    elif criteria.get("sort") == "deadline":
+        ranked.sort(key=lambda value: value["deadline"])
+    else:
+        ranked.sort(key=lambda value: (value["score"], value["updated_at"]), reverse=True)
+
+    return [entry["item"] for entry in ranked[:safe_limit]]
+
+
 @tool
 async def get_my_full_profile(config: RunnableConfig) -> str:
 	"""
@@ -755,6 +1421,7 @@ async def get_my_full_profile(config: RunnableConfig) -> str:
 					   major,
 					   minor,
 					   program_type,
+					   gpa,
 					   enrollment_year,
 					   expected_graduation_year,
 					   current_status,
@@ -929,6 +1596,346 @@ async def get_my_full_profile(config: RunnableConfig) -> str:
 			{"error": f"Lỗi lấy hồ sơ sinh viên: {str(exc)}"},
 			ensure_ascii=False,
 		)
+
+@tool
+async def get_scholarship_recommendations_for_chat(
+    config: RunnableConfig,
+    user_query: str = "",
+    max_results: int = 6,
+    active_only: bool = True,
+    open_only: bool = False,
+) -> str:
+    """
+    Build compact structured scholarship recommendations for chat cards.
+
+    Returns JSON with a short reply_hint and scholarship_recommendations metadata.
+    """
+    user_id = _uid(config)
+    requested_count = _extract_requested_recommendation_count(user_query)
+    desired_count = requested_count if requested_count is not None else max_results
+    safe_limit = max(1, min(int(desired_count), 8))
+    now = datetime.utcnow()
+
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            user_row = await conn.fetchrow(
+                """
+                SELECT up.country,
+                       up.career_goal,
+                       up.summary,
+                       up.interests AS interest_ids,
+                       up.skill AS skill_ids
+                FROM users u
+                LEFT JOIN users_profiles up ON up.user_id = u.id
+                WHERE u.id = $1
+                LIMIT 1
+                """,
+                user_id,
+            )
+
+            academic_rows = await conn.fetch(
+                """
+                SELECT university,
+                       education_program,
+                       degree_level,
+                       faculty,
+                       major,
+                       minor,
+                       program_type,
+                       gpa,
+                       current_year,
+                       current_semester
+                FROM student_academic_profiles
+                WHERE user_id = $1
+                ORDER BY updated_at DESC NULLS LAST
+                """,
+                user_id,
+            )
+
+            skill_ids = _ensure_uuid_list(user_row.get("skill_ids") if user_row else None)
+            interest_ids = _ensure_uuid_list(user_row.get("interest_ids") if user_row else None)
+            skill_rows = []
+            interest_rows = []
+            if skill_ids:
+                skill_rows = await conn.fetch("SELECT name FROM skills WHERE id = ANY($1::uuid[])", skill_ids)
+            if interest_ids:
+                interest_rows = await conn.fetch("SELECT name FROM profile_interests WHERE id = ANY($1::uuid[])", interest_ids)
+
+            scholarship_rows = await conn.fetch(
+                """
+                SELECT s.id,
+                       s.name,
+                       s.description,
+                       s.eligibility_criteria,
+                       s.benefits,
+                       s.provider,
+                       s.target_majors,
+                       s.target_universities,
+                       s.minimum_gpa,
+                       s.minimum_gpa_scale,
+                       s.amount,
+                       s.currency,
+                       s.level,
+                       s.is_active,
+                       s.application_deadline,
+                       s.result_announcement_date,
+                       s.updated_at,
+                       sc.name AS category_name
+                FROM scholarships s
+                LEFT JOIN scholarship_categories sc ON sc.id = s.category_id
+                WHERE ($1::boolean = false OR s.is_active = true)
+                  AND ($2::boolean = false OR (s.is_active = true AND (s.application_deadline IS NULL OR s.application_deadline >= $3)))
+                ORDER BY s.updated_at DESC NULLS LAST
+                LIMIT 300
+                """,
+                active_only,
+                open_only,
+                now,
+            )
+
+            scholarship_ids = [row["id"] for row in scholarship_rows if row.get("id")]
+            requirement_map: dict[str, list[dict[str, Any]]] = {}
+            if scholarship_ids:
+                requirement_rows = await conn.fetch(
+                    """
+                    SELECT scholarship_id,
+                           title,
+                           description,
+                           is_required,
+                           sort_order
+                    FROM scholarship_requirements
+                    WHERE scholarship_id = ANY($1::uuid[])
+                    ORDER BY is_required DESC, sort_order ASC
+                    """,
+                    scholarship_ids,
+                )
+                for item in requirement_rows:
+                    item_dict = dict(item)
+                    requirement_map.setdefault(str(item_dict.get("scholarship_id")), []).append(item_dict)
+
+        profile_payload = {
+            "user": _serialize(dict(user_row)) if user_row else {},
+            "academics": _serialize([dict(row) for row in academic_rows]),
+            "skills": _serialize([dict(row) for row in skill_rows]),
+            "interests": _serialize([dict(row) for row in interest_rows]),
+        }
+        profile = _build_profile_summary(profile_payload, user_query)
+
+        ranked: list[dict[str, Any]] = []
+        for row in scholarship_rows:
+            row_dict = dict(row)
+            score, matched_terms = _score_profile_match(profile, row_dict)
+
+            profile_major_tokens = set(_tokenize(str(profile.get("major") or "")))
+            target_major_tokens = set(_tokenize(" ".join(_as_list(row_dict.get("target_majors")))))
+            if profile_major_tokens and target_major_tokens and profile_major_tokens & target_major_tokens:
+                score = min(1.0, score + 0.25)
+
+            profile_gpa = profile.get("gpa")
+            minimum_gpa = row_dict.get("minimum_gpa")
+            try:
+                if profile_gpa is not None and minimum_gpa is not None:
+                    if float(profile_gpa) >= float(minimum_gpa):
+                        score = min(1.0, score + 0.15)
+                    else:
+                        score = max(0.0, score - 0.15)
+            except (TypeError, ValueError):
+                pass
+
+            deadline = row_dict.get("application_deadline")
+            is_open = bool(row_dict.get("is_active") and (deadline is None or deadline >= now))
+            if is_open:
+                score = min(1.0, score + 0.05)
+
+            sid = str(row_dict.get("id"))
+            ranked.append(
+                {
+                    "score": round(score, 6),
+                    "is_open": is_open,
+                    "item": _build_recommendation_item(
+                        row_dict,
+                        profile,
+                        requirement_map.get(sid, []),
+                        score,
+                        matched_terms,
+                    ),
+                }
+            )
+
+        ranked.sort(key=lambda value: (value["score"], value["is_open"]), reverse=True)
+        items = [entry["item"] for entry in ranked[:safe_limit]]
+        reply_hint = _build_recommendation_reply_hint(profile, bool(items))
+
+        return json.dumps(
+            {
+                "reply_hint": reply_hint,
+                "scholarship_recommendations": {
+                    "kind": "scholarship_recommendations",
+                    "basis": "profile_match",
+                    "items": _serialize(items),
+                },
+            },
+            ensure_ascii=False,
+        )
+    except Exception as exc:  # pragma: no cover - defensive fallback for tool runtime
+        logger.exception("get_scholarship_recommendations_for_chat_failed", error=str(exc), user_id=user_id)
+        return json.dumps(
+            {
+                "error": f"Không thể tạo gợi ý học bổng: {str(exc)}",
+                "reply_hint": "Tôi chưa thể tải gợi ý học bổng lúc này.",
+            },
+            ensure_ascii=False,
+        )
+
+
+@tool
+async def search_scholarship_recommendations_by_criteria(
+    user_query: str = "",
+    max_results: int = 6,
+    active_only: bool = True,
+    open_only: bool = False,
+) -> str:
+    """
+    Build compact scholarship cards from arbitrary search criteria.
+
+    Use this for broad scholarship search that is not about the current user's
+    profile: latest/recent, deadline, simple/complex requirements, GPA level,
+    major, school/university, provider/category, or mixed criteria.
+    """
+    requested_count = _extract_requested_recommendation_count(user_query)
+    desired_count = requested_count if requested_count is not None else max_results
+    safe_limit = max(1, min(int(desired_count), 8))
+    now = datetime.utcnow()
+
+    try:
+        criteria = _extract_scholarship_search_criteria(user_query)
+        scholarship_rows, requirement_map = await _fetch_recommendation_sources(active_only, open_only, now)
+        items = _rank_criteria_items(scholarship_rows, requirement_map, criteria, safe_limit, now)
+        reply_hint = _build_criteria_reply_hint(criteria, bool(items))
+        return json.dumps(
+            {
+                "reply_hint": reply_hint,
+                "scholarship_recommendations": {
+                    "kind": "scholarship_recommendations",
+                    "basis": "criteria",
+                    "items": _serialize(items),
+                },
+            },
+            ensure_ascii=False,
+        )
+    except Exception as exc:  # pragma: no cover - defensive fallback for tool runtime
+        logger.exception("search_scholarship_recommendations_by_criteria_failed", error=str(exc))
+        return json.dumps(
+            {
+                "error": f"Không thể tìm học bổng theo tiêu chí: {str(exc)}",
+                "reply_hint": "Tôi chưa thể tải học bổng theo tiêu chí lúc này.",
+            },
+            ensure_ascii=False,
+        )
+
+
+@tool
+async def get_scholarship_recommendations_for_described_profile(
+    user_query: str = "",
+    profile_json: str = "",
+    max_results: int = 6,
+    active_only: bool = True,
+    open_only: bool = False,
+) -> str:
+    """
+    Build compact scholarship cards for a profile described by the user.
+
+    Use this when the user asks for another person, a hypothetical student, or
+    gives GPA/school/major directly in the message. This tool does not read the
+    current user's profile.
+    """
+    requested_count = _extract_requested_recommendation_count(user_query)
+    desired_count = requested_count if requested_count is not None else max_results
+    safe_limit = max(1, min(int(desired_count), 8))
+    now = datetime.utcnow()
+
+    try:
+        parsed_profile: dict[str, Any] = {}
+        if profile_json.strip():
+            parsed = json.loads(profile_json)
+            if isinstance(parsed, dict):
+                parsed_profile = parsed
+        query_profile = _extract_query_profile(user_query)
+        profile = {**query_profile, **{k: v for k, v in parsed_profile.items() if v not in (None, "", [])}}
+        if user_query:
+            profile["keywords"] = user_query
+
+        scholarship_rows, requirement_map = await _fetch_recommendation_sources(active_only, open_only, now)
+        items = _rank_recommendation_items(scholarship_rows, requirement_map, profile, safe_limit, now)
+        reply_hint = _build_described_profile_reply_hint(profile, bool(items))
+        return json.dumps(
+            {
+                "reply_hint": reply_hint,
+                "scholarship_recommendations": {
+                    "kind": "scholarship_recommendations",
+                    "basis": "described_profile_match",
+                    "items": _serialize(items),
+                },
+            },
+            ensure_ascii=False,
+        )
+    except Exception as exc:  # pragma: no cover - defensive fallback for tool runtime
+        logger.exception("get_scholarship_recommendations_for_described_profile_failed", error=str(exc))
+        return json.dumps(
+            {
+                "error": f"Không thể tạo gợi ý học bổng theo hồ sơ được mô tả: {str(exc)}",
+                "reply_hint": "Tôi chưa thể tải gợi ý học bổng cho hồ sơ được mô tả lúc này.",
+            },
+            ensure_ascii=False,
+        )
+
+
+@tool
+async def get_latest_scholarship_recommendations_for_chat(
+    user_query: str = "",
+    max_results: int = 6,
+    active_only: bool = True,
+    open_only: bool = False,
+) -> str:
+    """
+    Build compact scholarship cards sorted by latest update.
+
+    Use this for "học bổng mới nhất", "gần đây", "latest", or broad discovery
+    requests that do not ask for compatibility with a user/profile.
+    """
+    requested_count = _extract_requested_recommendation_count(user_query)
+    desired_count = requested_count if requested_count is not None else max_results
+    safe_limit = max(1, min(int(desired_count), 8))
+    now = datetime.utcnow()
+
+    try:
+        criteria = _extract_scholarship_search_criteria(user_query or "học bổng mới nhất gần đây")
+        criteria["sort"] = "latest"
+        scholarship_rows, requirement_map = await _fetch_recommendation_sources(active_only, open_only, now)
+        items = _rank_criteria_items(scholarship_rows, requirement_map, criteria, safe_limit, now)
+        reply_hint = _build_criteria_reply_hint(criteria, bool(items))
+        return json.dumps(
+            {
+                "reply_hint": reply_hint,
+                "scholarship_recommendations": {
+                    "kind": "scholarship_recommendations",
+                    "basis": "criteria",
+                    "items": _serialize(items),
+                },
+            },
+            ensure_ascii=False,
+        )
+    except Exception as exc:  # pragma: no cover - defensive fallback for tool runtime
+        logger.exception("get_latest_scholarship_recommendations_for_chat_failed", error=str(exc))
+        return json.dumps(
+            {
+                "error": f"Không thể tải học bổng mới nhất: {str(exc)}",
+                "reply_hint": "Tôi chưa thể tải danh sách học bổng mới nhất lúc này.",
+            },
+            ensure_ascii=False,
+        )
+
 
 @tool
 async def match_scholarships_for_profile(

@@ -54,6 +54,26 @@ def _tool_call_args(tc: Any) -> dict[str, Any]:
     return dict(args) if isinstance(args, dict) else {}
 
 
+def _scholarship_reply_hint(messages: list[BaseMessage]) -> str | None:
+    for msg in reversed(messages):
+        if not isinstance(msg, ToolMessage):
+            continue
+        content = getattr(msg, "content", None)
+        if not isinstance(content, str):
+            continue
+        try:
+            data = json.loads(content)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(data, dict) or not isinstance(data.get("scholarship_recommendations"), dict):
+            continue
+        hint = data.get("reply_hint")
+        if isinstance(hint, str) and hint.strip():
+            return hint.strip()
+        return "Tôi đã tìm thấy một số học bổng phù hợp với bạn. Nhấn vào từng thẻ để xem tóm tắt."
+    return None
+
+
 async def run_tool_calling_turn(
     llm: BaseChatModel,
     tools: list[BaseTool],
@@ -135,6 +155,11 @@ async def run_tool_calling_turn_stream(
             # from the ainvoke call. We try to re-stream it for the visual effect,
             # but we MUST have a fallback in case Vertex flaked on the second call.
             final_content = ai_msg.content or ""
+            scholarship_hint = _scholarship_reply_hint(messages)
+            if scholarship_hint:
+                messages[-1] = AIMessage(content=scholarship_hint)
+                yield ("token", scholarship_hint)
+                return
             messages.pop()
             
             full_content = ""

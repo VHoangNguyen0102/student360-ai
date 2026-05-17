@@ -22,7 +22,17 @@ from .applications import (
     get_my_scholarship_applications,
     get_scholarship_application_detail,
 )
-from .matching import find_scholarship_id_by_name, get_scholarship_details,get_my_full_profile, match_scholarships_for_profile, get_all_scholarships
+from .matching import (
+    find_scholarship_id_by_name,
+    get_scholarship_details,
+    get_my_full_profile,
+    get_latest_scholarship_recommendations_for_chat,
+    get_scholarship_recommendations_for_chat,
+    get_scholarship_recommendations_for_described_profile,
+    match_scholarships_for_profile,
+    search_scholarship_recommendations_by_criteria,
+    get_all_scholarships,
+)
 
 ALL_SCHOLARSHIP_TOOLS: list[Any] = [
     # Public scholarship data (khong can user_id)
@@ -32,6 +42,10 @@ ALL_SCHOLARSHIP_TOOLS: list[Any] = [
     get_my_scholarship_applications,
     get_scholarship_application_detail,
     get_my_full_profile,
+    get_scholarship_recommendations_for_chat,
+    get_scholarship_recommendations_for_described_profile,
+    search_scholarship_recommendations_by_criteria,
+    get_latest_scholarship_recommendations_for_chat,
     match_scholarships_for_profile,
     get_all_scholarships,
 ]
