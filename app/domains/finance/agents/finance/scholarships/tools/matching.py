@@ -897,6 +897,21 @@ def _build_latest_reply_hint(has_items: bool) -> str:
     return "Tôi đã tìm thấy các học bổng mới cập nhật gần đây. Nhấn vào từng thẻ để xem tóm tắt."
 
 
+def _asks_for_closed_or_inactive_scholarships(user_query: str) -> bool:
+    normalized = _normalize_text_for_count(user_query or "")
+    signals = [
+        "het han",
+        "da het han",
+        "dong don",
+        "da dong",
+        "inactive",
+        "khong con hoat dong",
+        "closed",
+        "expired",
+    ]
+    return any(signal in normalized for signal in signals)
+
+
 def _extract_scholarship_search_criteria(user_query: str) -> dict[str, Any]:
     text = user_query or ""
     normalized = _normalize_text_for_count(text)
@@ -1603,7 +1618,7 @@ async def get_scholarship_recommendations_for_chat(
     user_query: str = "",
     max_results: int = 6,
     active_only: bool = True,
-    open_only: bool = False,
+    open_only: bool = True,
 ) -> str:
     """
     Build compact structured scholarship recommendations for chat cards.
@@ -1615,6 +1630,9 @@ async def get_scholarship_recommendations_for_chat(
     desired_count = requested_count if requested_count is not None else max_results
     safe_limit = max(1, min(int(desired_count), 8))
     now = datetime.utcnow()
+    include_closed = _asks_for_closed_or_inactive_scholarships(user_query)
+    active_filter = False if include_closed else active_only
+    open_filter = False if include_closed else open_only
 
     try:
         pool = await get_pool()
@@ -1689,8 +1707,8 @@ async def get_scholarship_recommendations_for_chat(
                 ORDER BY s.updated_at DESC NULLS LAST
                 LIMIT 300
                 """,
-                active_only,
-                open_only,
+                active_filter,
+                open_filter,
                 now,
             )
 
@@ -1794,7 +1812,7 @@ async def search_scholarship_recommendations_by_criteria(
     user_query: str = "",
     max_results: int = 6,
     active_only: bool = True,
-    open_only: bool = False,
+    open_only: bool = True,
 ) -> str:
     """
     Build compact scholarship cards from arbitrary search criteria.
@@ -1807,10 +1825,13 @@ async def search_scholarship_recommendations_by_criteria(
     desired_count = requested_count if requested_count is not None else max_results
     safe_limit = max(1, min(int(desired_count), 8))
     now = datetime.utcnow()
+    include_closed = _asks_for_closed_or_inactive_scholarships(user_query)
+    active_filter = False if include_closed else active_only
+    open_filter = False if include_closed else open_only
 
     try:
         criteria = _extract_scholarship_search_criteria(user_query)
-        scholarship_rows, requirement_map = await _fetch_recommendation_sources(active_only, open_only, now)
+        scholarship_rows, requirement_map = await _fetch_recommendation_sources(active_filter, open_filter, now)
         items = _rank_criteria_items(scholarship_rows, requirement_map, criteria, safe_limit, now)
         reply_hint = _build_criteria_reply_hint(criteria, bool(items))
         return json.dumps(
@@ -1841,7 +1862,7 @@ async def get_scholarship_recommendations_for_described_profile(
     profile_json: str = "",
     max_results: int = 6,
     active_only: bool = True,
-    open_only: bool = False,
+    open_only: bool = True,
 ) -> str:
     """
     Build compact scholarship cards for a profile described by the user.
@@ -1854,6 +1875,9 @@ async def get_scholarship_recommendations_for_described_profile(
     desired_count = requested_count if requested_count is not None else max_results
     safe_limit = max(1, min(int(desired_count), 8))
     now = datetime.utcnow()
+    include_closed = _asks_for_closed_or_inactive_scholarships(user_query)
+    active_filter = False if include_closed else active_only
+    open_filter = False if include_closed else open_only
 
     try:
         parsed_profile: dict[str, Any] = {}
@@ -1866,7 +1890,7 @@ async def get_scholarship_recommendations_for_described_profile(
         if user_query:
             profile["keywords"] = user_query
 
-        scholarship_rows, requirement_map = await _fetch_recommendation_sources(active_only, open_only, now)
+        scholarship_rows, requirement_map = await _fetch_recommendation_sources(active_filter, open_filter, now)
         items = _rank_recommendation_items(scholarship_rows, requirement_map, profile, safe_limit, now)
         reply_hint = _build_described_profile_reply_hint(profile, bool(items))
         return json.dumps(
@@ -1896,7 +1920,7 @@ async def get_latest_scholarship_recommendations_for_chat(
     user_query: str = "",
     max_results: int = 6,
     active_only: bool = True,
-    open_only: bool = False,
+    open_only: bool = True,
 ) -> str:
     """
     Build compact scholarship cards sorted by latest update.
@@ -1908,11 +1932,14 @@ async def get_latest_scholarship_recommendations_for_chat(
     desired_count = requested_count if requested_count is not None else max_results
     safe_limit = max(1, min(int(desired_count), 8))
     now = datetime.utcnow()
+    include_closed = _asks_for_closed_or_inactive_scholarships(user_query)
+    active_filter = False if include_closed else active_only
+    open_filter = False if include_closed else open_only
 
     try:
         criteria = _extract_scholarship_search_criteria(user_query or "học bổng mới nhất gần đây")
         criteria["sort"] = "latest"
-        scholarship_rows, requirement_map = await _fetch_recommendation_sources(active_only, open_only, now)
+        scholarship_rows, requirement_map = await _fetch_recommendation_sources(active_filter, open_filter, now)
         items = _rank_criteria_items(scholarship_rows, requirement_map, criteria, safe_limit, now)
         reply_hint = _build_criteria_reply_hint(criteria, bool(items))
         return json.dumps(
@@ -1942,7 +1969,7 @@ async def match_scholarships_for_profile(
     profile_json: str,
     max_results: int = 10,
     active_only: bool = True,
-    open_only: bool = False,
+    open_only: bool = True,
 ) -> str:
     """
     Rank scholarships by compatibility with a student profile.

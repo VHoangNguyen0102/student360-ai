@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 
 import structlog
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 
 from app.domains.finance.agents.finance.prompts import CLASSIFY_SYSTEM_PROMPT
 from app.core.database import get_pool
@@ -143,7 +143,12 @@ async def classify(
     return result
 
 
-@router.post("/classify/override", status_code=204)
+@router.post(
+    "/classify/override",
+    status_code=204,
+    response_class=Response,
+    response_model=None,
+)
 async def classify_override(
     req: ClassifyOverrideRequest,
     _: str = Depends(verify_service_token),
